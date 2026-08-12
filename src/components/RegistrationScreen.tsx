@@ -48,7 +48,15 @@ export default function RegistrationScreen({
   const [diagnosis, setDiagnosis] = useState("");
   const [otherDiagnosis, setOtherDiagnosis] = useState("");
   const [consultant, setConsultant] = useState("");
-  const [errors, setErrors] = useState<Record<string, string>>({});
+  type FieldKey =
+    | "name"
+    | "age"
+    | "gender"
+    | "address"
+    | "diagnosis"
+    | "otherDiagnosis"
+    | "consultant";
+  const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [saved, setSaved] = useState<Saved | null>(null);
 
   function reset() {
@@ -64,7 +72,7 @@ export default function RegistrationScreen({
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    const err: Record<string, string> = {};
+    const err: Partial<Record<FieldKey, string>> = {};
     if (!name.trim()) err.name = "Patient name is required.";
     if (!age.trim()) err.age = "Age is required.";
     if (!gender) err.gender = "Select gender.";
