@@ -1,24 +1,33 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useState } from "react";
+import LoginScreen from "../components/LoginScreen";
+import RegistrationScreen from "../components/RegistrationScreen";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
+  head: () => ({
+    meta: [
+      { title: "Unani Hospital OPD Management System" },
+      {
+        name: "description",
+        content:
+          "Internal OPD management system for Unani Hospital reception: employee login and fast patient OPD registration.",
+      },
+      { property: "og:title", content: "Unani Hospital OPD Management System" },
+      {
+        property: "og:description",
+        content: "Employee login and fast OPD patient registration for hospital reception desks.",
+      },
+    ],
+  }),
   component: Index,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
 function Index() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
+  const [employee, setEmployee] = useState<string | null>(null);
+
+  return employee ? (
+    <RegistrationScreen employee={employee} onLogout={() => setEmployee(null)} />
+  ) : (
+    <LoginScreen onLogin={setEmployee} />
   );
 }
