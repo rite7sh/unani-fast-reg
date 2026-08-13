@@ -4,7 +4,7 @@ import "./styles.css";
 import LoginScreen from "./components/LoginScreen";
 import RegistrationScreen from "./components/RegistrationScreen";
 
-function App() {
+export function App() {
   const [employee, setEmployee] = useState<string | null>(null);
 
   if (!employee) {
@@ -25,8 +25,21 @@ if (!rootElement) {
   throw new Error("Root element #root was not found");
 }
 
-ReactDOM.createRoot(rootElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+const root = ReactDOM.createRoot(rootElement);
+
+function renderApp() {
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+}
+
+renderApp();
+
+// Enable HMR hot updates
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    renderApp();
+  });
+}
