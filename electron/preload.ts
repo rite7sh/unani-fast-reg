@@ -1,5 +1,50 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
+// Type for database operations
+export interface PatientData {
+  id?: number;
+  opd_no: string;
+  registration_date: string;
+  patient_name: string;
+  age_years: number;
+  age_months: number;
+  gender: string;
+  address: string;
+  diagnosis: string;
+  diagnosis_other?: string;
+  consultant: string;
+  employee_id: string;
+  created_at?: string;
+  updated_at?: string;
+  is_deleted?: number;
+  synced?: number;
+  last_synced_at?: string | null;
+  sync_error?: string | null;
+}
+
+export interface DuplicateCheckResult {
+  isDuplicate: boolean;
+  existingPatient?: {
+    id: number;
+    opd_no: string;
+    patient_name: string;
+    registration_date: string;
+  };
+}
+
+export interface SearchResult {
+  id: number;
+  opd_no: string;
+  patient_name: string;
+  age_years: number;
+  age_months: number;
+  gender: string;
+  address: string;
+  diagnosis: string;
+  registration_date: string;
+  consultant: string;
+}
+
 // Secure context bridge - only expose what's necessary
 contextBridge.exposeInMainWorld('electron', {
   // Version information for testing
@@ -12,6 +57,37 @@ contextBridge.exposeInMainWorld('electron', {
   // Minimal health check API
   health: {
     ping: () => 'pong',
+  },
+
+  // Database API
+  db: {
+    registerPatient: async (patient: Omit<PatientData, 'id' | 'opd_no' | 'created_at' | 'updated_at'>) => {
+      return ipcRenderer.invoke('db:registerPatient', patient);
+    },
+    checkDuplicate: async (patientName: string, ageYears: number) => {
+      return ipcRenderer.invoke('db:checkDuplicate', patientName, ageYears);
+    },
+    searchPatients: async (query: string) => {
+      return ipcRenderer.invoke('db:searchPatients', query);
+    },
+    getPatient: async (id: number) => {
+      return ipcRenderer.invoke('db:getPatient', id);
+    },
+    updatePatient: async (id: number, updates: Partial<PatientData>) => {
+      return ipcRenderer.invoke('db:updatePatient', id, updates);
+    },
+    softDeletePatient: async (id: number) => {
+      return ipcRenderer.invoke('db:softDeletePatient', id);
+    },
+    getDiagnoses: async () => {
+      return ipcRenderer.invoke('db:getDiagnoses');
+    },
+    getConsultants: async () => {
+      return ipcRenderer.invoke('db:getConsultants');
+    },
+    getReturningPatientAddress: async (patientName: string) => {
+      return ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
+    },
   },
 
   // IPC for future use (add specific methods as needed)

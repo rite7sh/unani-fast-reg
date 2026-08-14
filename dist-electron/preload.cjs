@@ -13,6 +13,36 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
     health: {
         ping: () => 'pong',
     },
+    // Database API
+    db: {
+        registerPatient: async (patient) => {
+            return electron_1.ipcRenderer.invoke('db:registerPatient', patient);
+        },
+        checkDuplicate: async (patientName, ageYears) => {
+            return electron_1.ipcRenderer.invoke('db:checkDuplicate', patientName, ageYears);
+        },
+        searchPatients: async (query) => {
+            return electron_1.ipcRenderer.invoke('db:searchPatients', query);
+        },
+        getPatient: async (id) => {
+            return electron_1.ipcRenderer.invoke('db:getPatient', id);
+        },
+        updatePatient: async (id, updates) => {
+            return electron_1.ipcRenderer.invoke('db:updatePatient', id, updates);
+        },
+        softDeletePatient: async (id) => {
+            return electron_1.ipcRenderer.invoke('db:softDeletePatient', id);
+        },
+        getDiagnoses: async () => {
+            return electron_1.ipcRenderer.invoke('db:getDiagnoses');
+        },
+        getConsultants: async () => {
+            return electron_1.ipcRenderer.invoke('db:getConsultants');
+        },
+        getReturningPatientAddress: async (patientName) => {
+            return electron_1.ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
+        },
+    },
     // IPC for future use (add specific methods as needed)
     ipc: {
         send: (channel, data) => {

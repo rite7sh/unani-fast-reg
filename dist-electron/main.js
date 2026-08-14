@@ -1,6 +1,7 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, } from './database.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 async function findAvailableDevServer() {
@@ -12,11 +13,10 @@ async function findAvailableDevServer() {
             const timeoutId = setTimeout(() => controller.abort(), 500);
             const response = await fetch(url, {
                 method: 'HEAD',
-                signal: controller.signal
+                signal: controller.signal,
             });
             clearTimeout(timeoutId);
             if (response.ok || response.status === 404) {
-                // 404 is fine - means the server is running
                 console.log(`[Electron] Found Vite dev server on port ${port}`);
                 return url;
             }
@@ -25,13 +25,10 @@ async function findAvailableDevServer() {
             // Port not available, try next
         }
     }
-    // If none found, default to 9999
     console.warn('[Electron] Could not find Vite server, defaulting to 9999');
     return 'http://localhost:9999';
 }
 function getDevServerURL() {
-    // For development, try to find the actual port Vite is using
-    // This handles cases where Vite had to use a different port
     return findAvailableDevServer();
 }
 function createWindow() {
@@ -47,7 +44,6 @@ function createWindow() {
             sandbox: true,
         },
     });
-    // Add diagnostic listeners
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
         console.error(`[Electron] did-fail-load: code=${errorCode}, desc="${errorDescription}", url="${validatedURL}"`);
     });
@@ -57,47 +53,145 @@ function createWindow() {
     mainWindow.webContents.on('console-message', (level, message, line, sourceId) => {
         console.log(`[Renderer L${line}] ${message}`);
     });
-    // Try development server first, regardless of NODE_ENV
-    // This handles cases where NODE_ENV isn't set properly in npm scripts
     console.log('[Electron] Attempting to connect to dev server...');
     getDevServerURL().then(devURL => {
         console.log(`[Electron] Found dev server at: ${devURL}`);
         mainWindow?.loadURL(devURL);
     }).catch(err => {
-        // Dev server not found, fall back to production build
         console.log('[Electron] Dev server not found, loading from production build...');
         const indexPath = path.join(__dirname, '../dist/index.html');
         console.log(`[Electron] Loading production from: ${indexPath}`);
         mainWindow?.loadFile(indexPath);
     });
-    // Open DevTools for debugging
     mainWindow.webContents.openDevTools();
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
 }
-// Create window when Electron is ready
-app.on('ready', createWindow);
-// Quit when all windows are closed (except on macOS)
+app.on('ready', () => {
+    try {
+        // TEMPORARILY DISABLED FOR TESTING: initializeDatabase();
+        console.log('[Main] Database initialization disabled for testing');
+    }
+    catch (error) {
+        console.error('[Main] Failed to initialize database:', error);
+        app.quit();
+        return;
+    }
+    createWindow();
+});
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
     }
 });
-// Re-create window when dock icon is clicked on macOS
 app.on('activate', () => {
     if (mainWindow === null) {
         createWindow();
     }
 });
-// Prevent opening new windows
 app.on('web-contents-created', (_, contents) => {
     contents.setWindowOpenHandler(({ url }) => {
-        // Allow only internal navigation
         if (url.startsWith('file://') || url.startsWith('http://localhost:5173')) {
             return { action: 'allow' };
         }
-        // Deny all other URLs
         return { action: 'deny' };
     });
+});
+app.on('before-quit', () => {
+    closeDatabase();
+});
+// ============================================
+// IPC Handlers for Database Operations
+// ============================================
+ipcMain.handle('db:registerPatient', (event, patient) => {
+    try {
+        return registerPatient(patient);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:registerPatient failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:checkDuplicate', (event, patientName, ageYears) => {
+    try {
+        return checkDuplicate(patientName, ageYears);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:checkDuplicate failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:searchPatients', (event, query) => {
+    try {
+        return searchPatients(query);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:searchPatients failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getPatient', (event, id) => {
+    try {
+        return getPatient(id);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getPatient failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:updatePatient', (event, id, updates) => {
+    try {
+        return updatePatient(id, updates);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:updatePatient failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:softDeletePatient', (event, id) => {
+    try {
+        softDeletePatient(id);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:softDeletePatient failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getDiagnoses', () => {
+    try {
+        return getDiagnoses();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getDiagnoses failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getConsultants', () => {
+    try {
+        return getConsultants();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getConsultants failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getReturningPatientAddress', (event, patientName) => {
+    try {
+        return getReturningPatientAddress(patientName);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getReturningPatientAddress failed:', message);
+        throw error;
+    }
 });

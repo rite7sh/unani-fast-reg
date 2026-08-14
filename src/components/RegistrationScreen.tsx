@@ -76,22 +76,8 @@ const CONSULTANTS = [
   "Dr. K. Rahman — BUMS (General OPD)",
 ];
 
-const ADDRESS_HISTORY = [
-  "Mohalla Qaziyan, Tehsil Sadar, District Aligarh, 202001",
-  "Village Nagla Mansur, Tehsil Iglas, District Aligarh, 202124",
-  "Mohalla Shah Jamal, Tehsil Koil, District Aligarh, 202002",
-  "Village Barauli, Tehsil Atrauli, District Aligarh, 202280",
-  "Mohalla Turkman Gate, Tehsil Sadar, District Aligarh, 202001",
-  "Village Chherat, Tehsil Khair, District Aligarh, 202138",
-];
-
-const KNOWN_PATIENTS = [
-  { name: "Mohd. Aslam", age: "46", address: "Mohalla Qaziyan, Tehsil Sadar, District Aligarh, 202001" },
-  { name: "Rukhsana Begum", age: "32", address: "Village Nagla Mansur, Tehsil Iglas, District Aligarh, 202124" },
-  { name: "Ram Singh", age: "58", address: "Village Barauli, Tehsil Atrauli, District Aligarh, 202280" },
-];
-
 type SyncState = "Offline" | "Ready to sync" | "Syncing..." | "Synced" | "Sync failed";
+type Saved = { opd: string; name: string };
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -115,7 +101,17 @@ function validateAge(raw: string): string | null {
   return "Enter age in years (e.g. 34) or infant format (e.g. 0Y 8M).";
 }
 
-type Saved = { opd: string; name: string };
+function parseAge(raw: string): { years: number; months: number } | null {
+  const v = raw.trim().toUpperCase();
+  if (/^\d{1,3}$/.test(v)) {
+    return { years: Number(v), months: 0 };
+  }
+  const m = v.match(/^(\d{1,3})\s*Y(?:\s*(\d{1,2})\s*M)?$/);
+  if (m) {
+    return { years: Number(m[1]), months: m[2] ? Number(m[2]) : 0 };
+  }
+  return null;
+}
 
 export default function RegistrationScreen({
   employee,
@@ -126,8 +122,6 @@ export default function RegistrationScreen({
 }) {
   const today = useMemo(() => new Date(), []);
   const dateStr = `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`;
-  const [seq, setSeq] = useState(423);
-  const opdNo = `OPD-${today.getFullYear()}-${String(seq).padStart(5, "0")}`;
 
   const [sync, setSync] = useState<SyncState>("Offline");
   const lastSynced = `${dateStr} 18:42`;
@@ -141,6 +135,7 @@ export default function RegistrationScreen({
   const [otherDiagnosis, setOtherDiagnosis] = useState("");
   const [consultant, setConsultant] = useState("");
   const addrRef = useRef<HTMLTextAreaElement>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   type FieldKey =
     | "name"
@@ -153,19 +148,56 @@ export default function RegistrationScreen({
   const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [saved, setSaved] = useState<Saved | null>(null);
 
-  const addrSuggestions = useMemo(() => {
-    const q = address.trim().toLowerCase();
-    if (q.length < 3) return [];
-    return ADDRESS_HISTORY.filter((a) => a.toLowerCase().includes(q)).slice(0, 4);
-  }, [address]);
+  // Check for duplicate patient (by name + age)
+  const [duplicateWarning, setDuplicateWarning] = useState<{
+    opdNo: string;
+    name: string;
+  } | null>(null);
 
-  const match = useMemo(() => {
-    const n = name.trim().toLowerCase();
-    const a = age.trim();
-    if (n.length < 3 || !a) return null;
-    return (
-      KNOWN_PATIENTS.find((p) => p.name.toLowerCase() === n && p.age === a) ?? null
-    );
+  // Get returning patient address
+  const [returningAddress, setReturningAddress] = useState<string | null>(null);
+
+  // Check duplicate when name/age changes
+  useEffect(() => {
+    const checkForDuplicate = async () => {
+      const nameTrimmed = name.trim();
+      const ageParsed = parseAge(age);
+
+      if (nameTrimmed.length < 3 || !ageParsed) {
+        setDuplicateWarning(null);
+        setReturningAddress(null);
+        return;
+      }
+
+      try {
+        const result = await window.electron.db.checkDuplicate(
+          nameTrimmed,
+          ageParsed.years
+        );
+
+        if (result.isDuplicate && result.existingPatient) {
+          setDuplicateWarning({
+            opdNo: result.existingPatient.opd_no,
+            name: result.existingPatient.patient_name,
+          });
+
+          // Get the returning patient's address
+          const returnAddr = await window.electron.db.getReturningPatientAddress(
+            nameTrimmed
+          );
+          setReturningAddress(returnAddr);
+        } else {
+          setDuplicateWarning(null);
+          setReturningAddress(null);
+        }
+      } catch (error) {
+        console.error("[Registration] Duplicate check failed:", error);
+        setDuplicateWarning(null);
+      }
+    };
+
+    const timer = setTimeout(checkForDuplicate, 300);
+    return () => clearTimeout(timer);
   }, [name, age]);
 
   useEffect(() => {
@@ -184,6 +216,8 @@ export default function RegistrationScreen({
     setConsultant("");
     setErrors({});
     setAddrOpen(false);
+    setDuplicateWarning(null);
+    setReturningAddress(null);
   }
 
   function genderKeys(e: KeyboardEvent<HTMLDivElement>) {
@@ -195,8 +229,9 @@ export default function RegistrationScreen({
     e.preventDefault();
   }
 
-  function submit(e: FormEvent) {
+  async function submit(e: FormEvent) {
     e.preventDefault();
+
     const err: Partial<Record<FieldKey, string>> = {};
     if (!name.trim()) err.name = "Patient name is required.";
     const ageErr = validateAge(age);
@@ -207,13 +242,47 @@ export default function RegistrationScreen({
     if (diagnosis === "Other" && !otherDiagnosis.trim())
       err.otherDiagnosis = "Specify the diagnosis.";
     if (!consultant) err.consultant = "Select a consultant.";
+
     setErrors(err);
     if (Object.keys(err).length) return;
 
-    setSaved({ opd: opdNo, name: name.trim() });
-    setSeq((s) => s + 1);
-    setSync("Ready to sync");
-    window.print?.();
+    // Parse age
+    const ageParsed = parseAge(age);
+    if (!ageParsed) {
+      setErrors({ ...err, age: "Invalid age format" });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // Register patient in the database
+      const patient = await window.electron.db.registerPatient({
+        registration_date: dateStr,
+        patient_name: name.trim(),
+        age_years: ageParsed.years,
+        age_months: ageParsed.months,
+        gender,
+        address: address.trim(),
+        diagnosis,
+        diagnosis_other: diagnosis === "Other" ? otherDiagnosis.trim() : undefined,
+        consultant,
+        employee_id: employee,
+      });
+
+      setSaved({ opd: patient.opd_no, name: patient.patient_name });
+      setSync("Ready to sync");
+      window.print?.();
+      reset();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[Registration] Save failed:", message);
+      setErrors({
+        ...err,
+        name: `Save failed: ${message}`,
+      });
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -281,21 +350,6 @@ export default function RegistrationScreen({
 
             <div className="grid">
               <div className="field">
-                <label className="lbl" htmlFor="opd">
-                  OPD Registration No.
-                </label>
-                <input id="opd" className="inp ro" value={opdNo} readOnly tabIndex={-1} />
-                <p className="hint">Automatically generated</p>
-              </div>
-              <div className="field">
-                <label className="lbl" htmlFor="date">
-                  Date
-                </label>
-                <input id="date" className="inp ro" value={dateStr} readOnly tabIndex={-1} />
-                <p className="hint">System date</p>
-              </div>
-
-              <div className="field span2">
                 <label className="lbl" htmlFor="pname">
                   Patient Name <span className="req">*</span>
                 </label>
@@ -350,19 +404,19 @@ export default function RegistrationScreen({
                 {errors.gender && <p className="err">{errors.gender}</p>}
               </div>
 
-              {match && (
+              {duplicateWarning && returningAddress && (
                 <div className="span2 existing">
                   <div className="existing-txt">
-                    <strong>Existing patient found</strong>
+                    <strong>Returning patient detected</strong>
                     <span className="meta-line">
-                      {match.name} · {match.age}
+                      {duplicateWarning.name} ({duplicateWarning.opdNo})
                     </span>
                     <span className="meta-line dim">Previous address available</span>
                   </div>
                   <button
                     type="button"
                     className="btn-secondary sm"
-                    onClick={() => setAddress(match.address)}
+                    onClick={() => setAddress(returningAddress)}
                   >
                     Use Existing Details
                   </button>
@@ -373,43 +427,16 @@ export default function RegistrationScreen({
                 <label className="lbl" htmlFor="addr">
                   Address <span className="req">*</span>
                 </label>
-                <div className="ac-wrap">
-                  <textarea
-                    id="addr"
-                    ref={addrRef}
-                    className="inp ta"
-                    rows={2}
-                    autoComplete="off"
-                    placeholder="Village / Mohalla, Tehsil, District, PIN (optional)"
-                    value={address}
-                    onChange={(e) => {
-                      setAddress(e.target.value);
-                      setAddrOpen(true);
-                    }}
-                    onFocus={() => setAddrOpen(true)}
-                    onBlur={() => window.setTimeout(() => setAddrOpen(false), 120)}
-                  />
-                  {addrOpen && addrSuggestions.length > 0 && (
-                    <ul className="ac-list">
-                      {addrSuggestions.map((s) => (
-                        <li key={s}>
-                          <button
-                            type="button"
-                            className="ac-item"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              setAddress(s);
-                              setAddrOpen(false);
-                              addrRef.current?.focus();
-                            }}
-                          >
-                            {s}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
+                <textarea
+                  id="addr"
+                  ref={addrRef}
+                  className="inp ta"
+                  rows={2}
+                  autoComplete="off"
+                  placeholder="Village / Mohalla, Tehsil, District, PIN (optional)"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                />
                 {errors.address && <p className="err">{errors.address}</p>}
               </div>
 
@@ -470,11 +497,11 @@ export default function RegistrationScreen({
             </div>
 
             <div className="actions bar">
-              <button type="button" className="btn-secondary" onClick={reset}>
+              <button type="button" className="btn-secondary" onClick={reset} disabled={isSaving}>
                 Clear
               </button>
-              <button type="submit" className="btn-primary">
-                Save &amp; Print
+              <button type="submit" className="btn-primary" disabled={isSaving}>
+                {isSaving ? "Saving..." : "Save & Print"}
               </button>
             </div>
           </form>
