@@ -1,9 +1,7 @@
 import { app } from 'electron';
-import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'path';
 
-const require = createRequire(import.meta.url);
 const Database = require('better-sqlite3') as any;
 
 export interface Patient {

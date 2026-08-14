@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, } from './database.js';
+import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, } from './database.cjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 async function findAvailableDevServer() {
@@ -70,8 +70,7 @@ function createWindow() {
 }
 app.on('ready', () => {
     try {
-        // TEMPORARILY DISABLED FOR TESTING: initializeDatabase();
-        console.log('[Main] Database initialization disabled for testing');
+        initializeDatabase();
     }
     catch (error) {
         console.error('[Main] Failed to initialize database:', error);

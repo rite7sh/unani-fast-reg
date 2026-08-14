@@ -10,14 +10,14 @@
     "dev:electron": "electron .",
     "build": "npm run build:vite && npm run build:electron",
     "build:vite": "vite build",
-    "build:electron": "tsc -p electron/tsconfig.json && tsc -p electron/preload.tsconfig.json && node --input-type=module -e \"import fs from 'fs'; fs.renameSync('dist-electron/preload.js', 'dist-electron/preload.cjs');\"",
+    "build:electron": "tsc -p electron/tsconfig.json && tsc -p electron/preload.tsconfig.json && tsc -p electron/database.tsconfig.json && node --input-type=module -e \"import fs from 'fs'; fs.renameSync('dist-electron/preload.js', 'dist-electron/preload.cjs'); fs.renameSync('dist-electron/database.js', 'dist-electron/database.cjs');\"",
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write ."
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.2.1",
-    "better-sqlite3": "^13.0.3",
+    "better-sqlite3": "12.11.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "sql.js": "^1.14.1",
@@ -48,6 +48,6 @@
   },
   "allowScripts": {
     "electron@33.4.11": true,
-    "better-sqlite3@13.0.3": true
+    "better-sqlite3@12.11.1": true
   }
 }

@@ -1,21 +1,35 @@
-import { app } from 'electron';
-import { createRequire } from 'node:module';
-import fs from 'node:fs';
-import path from 'path';
-const require = createRequire(import.meta.url);
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.initializeDatabase = initializeDatabase;
+exports.closeDatabase = closeDatabase;
+exports.registerPatient = registerPatient;
+exports.checkDuplicate = checkDuplicate;
+exports.searchPatients = searchPatients;
+exports.getPatient = getPatient;
+exports.updatePatient = updatePatient;
+exports.softDeletePatient = softDeletePatient;
+exports.getDiagnoses = getDiagnoses;
+exports.getConsultants = getConsultants;
+exports.getReturningPatientAddress = getReturningPatientAddress;
+const electron_1 = require("electron");
+const node_fs_1 = __importDefault(require("node:fs"));
+const path_1 = __importDefault(require("path"));
 const Database = require('better-sqlite3');
 let db = null;
 let isInitialized = false;
 function getDatabasePath() {
-    const userDataPath = app.getPath('userData');
-    const dataDir = path.join(userDataPath, 'data');
+    const userDataPath = electron_1.app.getPath('userData');
+    const dataDir = path_1.default.join(userDataPath, 'data');
     // Ensure data directory exists
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
+    if (!node_fs_1.default.existsSync(dataDir)) {
+        node_fs_1.default.mkdirSync(dataDir, { recursive: true });
     }
-    return path.join(dataDir, 'opd.db');
+    return path_1.default.join(dataDir, 'opd.db');
 }
-export function initializeDatabase() {
+function initializeDatabase() {
     if (isInitialized && db) {
         return;
     }
@@ -62,7 +76,7 @@ export function initializeDatabase() {
         throw error;
     }
 }
-export function closeDatabase() {
+function closeDatabase() {
     if (db) {
         db.close();
         db = null;
@@ -89,7 +103,7 @@ function getNextOpdNumber() {
     const paddedNum = String(nextNumber).padStart(5, '0');
     return `OPD-${year}-${paddedNum}`;
 }
-export function registerPatient(patient) {
+function registerPatient(patient) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
@@ -111,7 +125,7 @@ export function registerPatient(patient) {
         updated_at: now,
     };
 }
-export function checkDuplicate(patientName, ageYears) {
+function checkDuplicate(patientName, ageYears) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
@@ -135,7 +149,7 @@ export function checkDuplicate(patientName, ageYears) {
     }
     return { isDuplicate: false };
 }
-export function searchPatients(query) {
+function searchPatients(query) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
@@ -152,7 +166,7 @@ export function searchPatients(query) {
     const searchPattern = `%${query}%`;
     return stmt.all(searchPattern, searchPattern);
 }
-export function getPatient(id) {
+function getPatient(id) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
@@ -161,7 +175,7 @@ export function getPatient(id) {
   `);
     return stmt.get(id) || null;
 }
-export function updatePatient(id, updates) {
+function updatePatient(id, updates) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
@@ -197,7 +211,7 @@ export function updatePatient(id, updates) {
     stmt.run(...updateValues);
     return getPatient(id);
 }
-export function softDeletePatient(id) {
+function softDeletePatient(id) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
@@ -207,7 +221,7 @@ export function softDeletePatient(id) {
   `);
     stmt.run(now, id);
 }
-export function getDiagnoses() {
+function getDiagnoses() {
     // Return hardcoded list for now (can be extended to read from database)
     return [
         "Nazla (Coryza)",
@@ -277,7 +291,7 @@ export function getDiagnoses() {
         "Other",
     ];
 }
-export function getConsultants() {
+function getConsultants() {
     // Return hardcoded list for now (can be extended to read from database)
     return [
         "Dr. Mohd. Ashraf — BUMS",
@@ -287,7 +301,7 @@ export function getConsultants() {
         "Dr. K. Rahman — BUMS (General OPD)",
     ];
 }
-export function getReturningPatientAddress(patientName) {
+function getReturningPatientAddress(patientName) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }

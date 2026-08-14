@@ -14,7 +14,7 @@ import {
   getConsultants,
   getReturningPatientAddress,
   type Patient,
-} from './database.js';
+} from './database.cjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -98,8 +98,7 @@ function createWindow() {
 
 app.on('ready', () => {
   try {
-    // TEMPORARILY DISABLED FOR TESTING: initializeDatabase();
-    console.log('[Main] Database initialization disabled for testing');
+    initializeDatabase();
   } catch (error) {
     console.error('[Main] Failed to initialize database:', error);
     app.quit();
