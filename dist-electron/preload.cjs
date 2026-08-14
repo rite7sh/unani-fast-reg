@@ -45,6 +45,9 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         getDashboardStats: async () => {
             return electron_1.ipcRenderer.invoke('db:getDashboardStats');
         },
+        previewNextOpdNumber: async () => {
+            return electron_1.ipcRenderer.invoke('db:previewNextOpdNumber');
+        },
     },
     // IPC for future use (add specific methods as needed)
     ipc: {

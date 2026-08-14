@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.initializeDatabase = initializeDatabase;
 exports.closeDatabase = closeDatabase;
+exports.previewNextOpdNumber = previewNextOpdNumber;
 exports.registerPatient = registerPatient;
 exports.checkDuplicate = checkDuplicate;
 exports.searchPatients = searchPatients;
@@ -103,6 +104,16 @@ function getNextOpdNumber() {
     }
     const paddedNum = String(nextNumber).padStart(5, '0');
     return `OPD-${year}-${paddedNum}`;
+}
+// Read-only preview of the OPD number that would be assigned next.
+// Does not reserve or persist anything — reuses the exact same
+// generation logic as registerPatient(); the number actually assigned
+// at save time is always taken from the real registerPatient() result.
+function previewNextOpdNumber() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    return getNextOpdNumber();
 }
 function registerPatient(patient) {
     if (!db || !isInitialized) {

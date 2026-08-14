@@ -61,6 +61,7 @@ declare global {
     getConsultants: () => Promise<string[]>;
     getReturningPatientAddress: (patientName: string) => Promise<string | null>;
     getDashboardStats: () => Promise<DashboardStats>;
+    previewNextOpdNumber: () => Promise<string>;
   }
 
   interface ElectronAPI {

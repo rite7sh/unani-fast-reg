@@ -183,7 +183,7 @@ export default function PatientHistoryScreen({
           <form className="search-bar" onSubmit={submitSearch}>
             <div className="search-field">
               <label className="lbl" htmlFor="hist-query">
-                Name or OPD No.
+                Search by Patient Name or OPD No.
               </label>
               <input
                 id="hist-query"

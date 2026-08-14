@@ -14,6 +14,7 @@ import {
   getConsultants,
   getReturningPatientAddress,
   getDashboardStats,
+  previewNextOpdNumber,
   type Patient,
 } from './database.cjs';
 
@@ -235,6 +236,16 @@ ipcMain.handle('db:getDashboardStats', () => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[IPC] db:getDashboardStats failed:', message);
+    throw error;
+  }
+});
+
+ipcMain.handle('db:previewNextOpdNumber', () => {
+  try {
+    return previewNextOpdNumber();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[IPC] db:previewNextOpdNumber failed:', message);
     throw error;
   }
 });

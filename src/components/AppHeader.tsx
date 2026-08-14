@@ -23,7 +23,7 @@ export default function AppHeader({
       <div className="appbar-right">
         {right}
         <span className="dot" aria-hidden="true" />
-        <span className="meta">{employee}</span>
+        <span className="meta">Employee {employee}</span>
         <button className="btn-ghost" onClick={onLogout}>
           Logout
         </button>

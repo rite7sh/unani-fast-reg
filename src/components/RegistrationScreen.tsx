@@ -152,6 +152,27 @@ export default function RegistrationScreen({
   const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [saved, setSaved] = useState<Saved | null>(null);
 
+  // Preview of the OPD number that will be assigned on save. Read-only —
+  // sourced from the backend, never computed here. The number actually
+  // persisted always comes from registerPatient()'s own return value.
+  const [previewOpd, setPreviewOpd] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (saved) return;
+    let cancelled = false;
+    window.electron.db
+      .previewNextOpdNumber()
+      .then((opd) => {
+        if (!cancelled) setPreviewOpd(opd);
+      })
+      .catch((error) => {
+        console.error("[Registration] Failed to preview OPD number:", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [saved]);
+
   // Check for duplicate patient (by name + age)
   const [duplicateWarning, setDuplicateWarning] = useState<{
     opdNo: string;
@@ -321,7 +342,7 @@ export default function RegistrationScreen({
             Back to Dashboard
           </button>
           <span className="dot" aria-hidden="true" />
-          <span className="meta">{employee}</span>
+          <span className="meta">Employee {employee}</span>
           <button className="btn-ghost" onClick={onLogout}>
             Logout
           </button>
@@ -332,10 +353,14 @@ export default function RegistrationScreen({
         {saved ? (
           <section className="panel success">
             <h2 className="panel-title">✓ Patient registered successfully</h2>
-            <p className="succ-line">
-              <span className="opd-label">OPD No.</span>
-              <strong className="opd-chip">{saved.opd}</strong> — {saved.name}
-            </p>
+            <div className="opd-result">
+              <div className="opd-result-label">OPD No.</div>
+              <div className="opd-result-value">{saved.opd}</div>
+            </div>
+            <div className="detail-row">
+              <span className="lbl">Patient Name</span>
+              <div className="detail-value">{saved.name}</div>
+            </div>
             <p className="succ-note">Slip sent to printer.</p>
             <div className="actions">
               <button className="btn-secondary" onClick={() => window.print?.()}>
@@ -356,6 +381,11 @@ export default function RegistrationScreen({
         ) : (
           <form className="panel" onSubmit={submit}>
             <h2 className="panel-title">New OPD Registration</h2>
+
+            <div className="opd-result">
+              <div className="opd-result-label">OPD No.</div>
+              <div className="opd-result-value">{previewOpd ?? "—"}</div>
+            </div>
 
             <div className="grid">
               <div className="field">
@@ -418,7 +448,7 @@ export default function RegistrationScreen({
                   <div className="existing-txt">
                     <strong>Returning patient detected</strong>
                     <span className="meta-line">
-                      {duplicateWarning.name} ({duplicateWarning.opdNo})
+                      {duplicateWarning.name} — <span className="opd-chip">{duplicateWarning.opdNo}</span>
                     </span>
                     <span className="meta-line dim">Previous address available</span>
                   </div>

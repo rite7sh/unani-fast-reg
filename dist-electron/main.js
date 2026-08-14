@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, } from './database.cjs';
+import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, previewNextOpdNumber, } from './database.cjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 async function findAvailableDevServer() {
@@ -201,6 +201,16 @@ ipcMain.handle('db:getDashboardStats', () => {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('[IPC] db:getDashboardStats failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:previewNextOpdNumber', () => {
+    try {
+        return previewNextOpdNumber();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:previewNextOpdNumber failed:', message);
         throw error;
     }
 });

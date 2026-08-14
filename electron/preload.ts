@@ -96,6 +96,9 @@ contextBridge.exposeInMainWorld('electron', {
     getDashboardStats: async (): Promise<DashboardStats> => {
       return ipcRenderer.invoke('db:getDashboardStats');
     },
+    previewNextOpdNumber: async (): Promise<string> => {
+      return ipcRenderer.invoke('db:previewNextOpdNumber');
+    },
   },
 
   // IPC for future use (add specific methods as needed)

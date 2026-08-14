@@ -148,6 +148,17 @@ function getNextOpdNumber(): string {
   return `OPD-${year}-${paddedNum}`;
 }
 
+// Read-only preview of the OPD number that would be assigned next.
+// Does not reserve or persist anything — reuses the exact same
+// generation logic as registerPatient(); the number actually assigned
+// at save time is always taken from the real registerPatient() result.
+export function previewNextOpdNumber(): string {
+  if (!db || !isInitialized) {
+    throw new Error('Database not initialized');
+  }
+  return getNextOpdNumber();
+}
+
 export function registerPatient(patient: Omit<Patient, 'id' | 'opd_no' | 'created_at' | 'updated_at'>): Patient {
   if (!db || !isInitialized) {
     throw new Error('Database not initialized');

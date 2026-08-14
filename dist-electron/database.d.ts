@@ -41,6 +41,7 @@ export interface SearchResult {
 }
 export declare function initializeDatabase(): void;
 export declare function closeDatabase(): void;
+export declare function previewNextOpdNumber(): string;
 export declare function registerPatient(patient: Omit<Patient, 'id' | 'opd_no' | 'created_at' | 'updated_at'>): Patient;
 export declare function checkDuplicate(patientName: string, ageYears: number): DuplicateCheckResult;
 export declare function searchPatients(query: string, registrationDate?: string): SearchResult[];

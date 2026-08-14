@@ -320,11 +320,21 @@ select.inp { padding-left: 6px; }
   color: var(--muted); border-bottom: 1px solid var(--line); padding: 8px 10px;
 }
 .hist-table td { border-bottom: 1px solid var(--line); padding: 9px 10px; vertical-align: top; }
-.hist-table tbody tr { cursor: pointer; }
-.hist-table tbody tr:hover { background: var(--hg-050); }
-.opd-chip { display: inline-block; font-weight: 700; color: var(--hg-700); font-variant-numeric: tabular-nums; }
+.hist-table td:first-child { white-space: nowrap; }
+.hist-table tbody tr { cursor: pointer; transition: background-color .12s ease, box-shadow .12s ease; }
+.hist-table tbody tr:hover { background: var(--hg-050); box-shadow: inset 3px 0 0 var(--hg-600); }
+.hist-table tbody tr:active { background: var(--hg-100); }
+.opd-chip { display: inline-block; white-space: nowrap; font-weight: 700; color: var(--hg-700); font-variant-numeric: tabular-nums; }
 .opd-label { font-size: 12px; color: var(--muted); margin-right: 6px; }
 .empty-note { padding: 24px 0; text-align: center; color: var(--muted); font-size: 13.5px; }
+
+/* Prominent OPD result (registration success) */
+.opd-result {
+  background: var(--hg-050); border: 1px solid var(--line); border-radius: 6px;
+  padding: 14px 18px; margin: 4px 0 14px; display: inline-block;
+}
+.opd-result-label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+.opd-result-value { font-size: 28px; font-weight: 700; color: var(--hg-900); white-space: nowrap; margin-top: 2px; }
 
 /* Patient detail */
 .detail-panel { margin-top: 16px; }
