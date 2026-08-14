@@ -43,10 +43,15 @@ export declare function initializeDatabase(): void;
 export declare function closeDatabase(): void;
 export declare function registerPatient(patient: Omit<Patient, 'id' | 'opd_no' | 'created_at' | 'updated_at'>): Patient;
 export declare function checkDuplicate(patientName: string, ageYears: number): DuplicateCheckResult;
-export declare function searchPatients(query: string): SearchResult[];
+export declare function searchPatients(query: string, registrationDate?: string): SearchResult[];
 export declare function getPatient(id: number): Patient | null;
 export declare function updatePatient(id: number, updates: Partial<Patient>): Patient;
 export declare function softDeletePatient(id: number): void;
 export declare function getDiagnoses(): string[];
 export declare function getConsultants(): string[];
+export interface DashboardStats {
+    todayCount: number;
+    totalCount: number;
+}
+export declare function getDashboardStats(): DashboardStats;
 export declare function getReturningPatientAddress(patientName: string): string | null;

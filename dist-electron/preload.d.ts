@@ -39,3 +39,7 @@ export interface SearchResult {
     registration_date: string;
     consultant: string;
 }
+export interface DashboardStats {
+    todayCount: number;
+    totalCount: number;
+}

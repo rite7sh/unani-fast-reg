@@ -13,6 +13,7 @@ exports.updatePatient = updatePatient;
 exports.softDeletePatient = softDeletePatient;
 exports.getDiagnoses = getDiagnoses;
 exports.getConsultants = getConsultants;
+exports.getDashboardStats = getDashboardStats;
 exports.getReturningPatientAddress = getReturningPatientAddress;
 const electron_1 = require("electron");
 const node_fs_1 = __importDefault(require("node:fs"));
@@ -149,22 +150,26 @@ function checkDuplicate(patientName, ageYears) {
     }
     return { isDuplicate: false };
 }
-function searchPatients(query) {
+function searchPatients(query, registrationDate) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
+    const conditions = ['(patient_name LIKE ? OR opd_no LIKE ?)', 'is_deleted = 0'];
+    const params = [`%${query}%`, `%${query}%`];
+    if (registrationDate) {
+        conditions.push('registration_date = ?');
+        params.push(registrationDate);
+    }
     const stmt = db.prepare(`
-    SELECT 
+    SELECT
       id, opd_no, patient_name, age_years, age_months,
       gender, address, diagnosis, registration_date, consultant
     FROM patients
-    WHERE (patient_name LIKE ? OR opd_no LIKE ?)
-      AND is_deleted = 0
+    WHERE ${conditions.join(' AND ')}
     ORDER BY registration_date DESC
     LIMIT 50
   `);
-    const searchPattern = `%${query}%`;
-    return stmt.all(searchPattern, searchPattern);
+    return stmt.all(...params);
 }
 function getPatient(id) {
     if (!db || !isInitialized) {
@@ -300,6 +305,25 @@ function getConsultants() {
         "Dr. M. Iqbal — BUMS, MD (Ilaj-bit-Tadbeer)",
         "Dr. K. Rahman — BUMS (General OPD)",
     ];
+}
+function getTodayRegistrationDate() {
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`;
+}
+function getDashboardStats() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const todayStmt = db.prepare(`
+    SELECT COUNT(*) AS count FROM patients WHERE registration_date = ? AND is_deleted = 0
+  `);
+    const totalStmt = db.prepare(`
+    SELECT COUNT(*) AS count FROM patients WHERE is_deleted = 0
+  `);
+    const todayCount = todayStmt.get(getTodayRegistrationDate()).count;
+    const totalCount = totalStmt.get().count;
+    return { todayCount, totalCount };
 }
 function getReturningPatientAddress(patientName) {
     if (!db || !isInitialized) {

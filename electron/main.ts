@@ -13,6 +13,7 @@ import {
   getDiagnoses,
   getConsultants,
   getReturningPatientAddress,
+  getDashboardStats,
   type Patient,
 } from './database.cjs';
 
@@ -157,9 +158,9 @@ ipcMain.handle('db:checkDuplicate', (event, patientName: string, ageYears: numbe
   }
 });
 
-ipcMain.handle('db:searchPatients', (event, query: string) => {
+ipcMain.handle('db:searchPatients', (event, query: string, registrationDate?: string) => {
   try {
-    return searchPatients(query);
+    return searchPatients(query, registrationDate);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[IPC] db:searchPatients failed:', message);
@@ -224,6 +225,16 @@ ipcMain.handle('db:getReturningPatientAddress', (event, patientName: string) => 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[IPC] db:getReturningPatientAddress failed:', message);
+    throw error;
+  }
+});
+
+ipcMain.handle('db:getDashboardStats', () => {
+  try {
+    return getDashboardStats();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[IPC] db:getDashboardStats failed:', message);
     throw error;
   }
 });

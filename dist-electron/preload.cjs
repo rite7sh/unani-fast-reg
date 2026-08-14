@@ -21,8 +21,8 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         checkDuplicate: async (patientName, ageYears) => {
             return electron_1.ipcRenderer.invoke('db:checkDuplicate', patientName, ageYears);
         },
-        searchPatients: async (query) => {
-            return electron_1.ipcRenderer.invoke('db:searchPatients', query);
+        searchPatients: async (query, registrationDate) => {
+            return electron_1.ipcRenderer.invoke('db:searchPatients', query, registrationDate);
         },
         getPatient: async (id) => {
             return electron_1.ipcRenderer.invoke('db:getPatient', id);
@@ -41,6 +41,9 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         },
         getReturningPatientAddress: async (patientName) => {
             return electron_1.ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
+        },
+        getDashboardStats: async () => {
+            return electron_1.ipcRenderer.invoke('db:getDashboardStats');
         },
     },
     // IPC for future use (add specific methods as needed)

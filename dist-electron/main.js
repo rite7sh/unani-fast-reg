@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, } from './database.cjs';
+import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, } from './database.cjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 async function findAvailableDevServer() {
@@ -123,9 +123,9 @@ ipcMain.handle('db:checkDuplicate', (event, patientName, ageYears) => {
         throw error;
     }
 });
-ipcMain.handle('db:searchPatients', (event, query) => {
+ipcMain.handle('db:searchPatients', (event, query, registrationDate) => {
     try {
-        return searchPatients(query);
+        return searchPatients(query, registrationDate);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -191,6 +191,16 @@ ipcMain.handle('db:getReturningPatientAddress', (event, patientName) => {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('[IPC] db:getReturningPatientAddress failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getDashboardStats', () => {
+    try {
+        return getDashboardStats();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getDashboardStats failed:', message);
         throw error;
     }
 });

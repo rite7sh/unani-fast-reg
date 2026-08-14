@@ -218,24 +218,30 @@ export function checkDuplicate(patientName: string, ageYears: number): Duplicate
   return { isDuplicate: false };
 }
 
-export function searchPatients(query: string): SearchResult[] {
+export function searchPatients(query: string, registrationDate?: string): SearchResult[] {
   if (!db || !isInitialized) {
     throw new Error('Database not initialized');
   }
 
+  const conditions = ['(patient_name LIKE ? OR opd_no LIKE ?)', 'is_deleted = 0'];
+  const params: unknown[] = [`%${query}%`, `%${query}%`];
+
+  if (registrationDate) {
+    conditions.push('registration_date = ?');
+    params.push(registrationDate);
+  }
+
   const stmt = db.prepare(`
-    SELECT 
+    SELECT
       id, opd_no, patient_name, age_years, age_months,
       gender, address, diagnosis, registration_date, consultant
     FROM patients
-    WHERE (patient_name LIKE ? OR opd_no LIKE ?)
-      AND is_deleted = 0
+    WHERE ${conditions.join(' AND ')}
     ORDER BY registration_date DESC
     LIMIT 50
   `);
 
-  const searchPattern = `%${query}%`;
-  return stmt.all(searchPattern, searchPattern) as SearchResult[];
+  return stmt.all(...params) as SearchResult[];
 }
 
 export function getPatient(id: number): Patient | null {
@@ -390,6 +396,35 @@ export function getConsultants(): string[] {
     "Dr. M. Iqbal — BUMS, MD (Ilaj-bit-Tadbeer)",
     "Dr. K. Rahman — BUMS (General OPD)",
   ];
+}
+
+export interface DashboardStats {
+  todayCount: number;
+  totalCount: number;
+}
+
+function getTodayRegistrationDate(): string {
+  const today = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`;
+}
+
+export function getDashboardStats(): DashboardStats {
+  if (!db || !isInitialized) {
+    throw new Error('Database not initialized');
+  }
+
+  const todayStmt = db.prepare(`
+    SELECT COUNT(*) AS count FROM patients WHERE registration_date = ? AND is_deleted = 0
+  `);
+  const totalStmt = db.prepare(`
+    SELECT COUNT(*) AS count FROM patients WHERE is_deleted = 0
+  `);
+
+  const todayCount = (todayStmt.get(getTodayRegistrationDate()) as { count: number }).count;
+  const totalCount = (totalStmt.get() as { count: number }).count;
+
+  return { todayCount, totalCount };
 }
 
 export function getReturningPatientAddress(patientName: string): string | null {

@@ -45,6 +45,11 @@ export interface SearchResult {
   consultant: string;
 }
 
+export interface DashboardStats {
+  todayCount: number;
+  totalCount: number;
+}
+
 // Secure context bridge - only expose what's necessary
 contextBridge.exposeInMainWorld('electron', {
   // Version information for testing
@@ -67,8 +72,8 @@ contextBridge.exposeInMainWorld('electron', {
     checkDuplicate: async (patientName: string, ageYears: number) => {
       return ipcRenderer.invoke('db:checkDuplicate', patientName, ageYears);
     },
-    searchPatients: async (query: string) => {
-      return ipcRenderer.invoke('db:searchPatients', query);
+    searchPatients: async (query: string, registrationDate?: string) => {
+      return ipcRenderer.invoke('db:searchPatients', query, registrationDate);
     },
     getPatient: async (id: number) => {
       return ipcRenderer.invoke('db:getPatient', id);
@@ -87,6 +92,9 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getReturningPatientAddress: async (patientName: string) => {
       return ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
+    },
+    getDashboardStats: async (): Promise<DashboardStats> => {
+      return ipcRenderer.invoke('db:getDashboardStats');
     },
   },
 

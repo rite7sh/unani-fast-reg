@@ -116,9 +116,13 @@ function parseAge(raw: string): { years: number; months: number } | null {
 export default function RegistrationScreen({
   employee,
   onLogout,
+  onBack,
+  onNavigateHistory,
 }: {
   employee: string;
   onLogout: () => void;
+  onBack: () => void;
+  onNavigateHistory: () => void;
 }) {
   const today = useMemo(() => new Date(), []);
   const dateStr = `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`;
@@ -309,8 +313,12 @@ export default function RegistrationScreen({
             Sync to Server
           </button>
           <span className="dot" aria-hidden="true" />
-          <button className="btn-ghost" onClick={() => undefined} title="Opens records search">
+          <button className="btn-ghost" onClick={onNavigateHistory} title="Opens records search">
             Search Records
+          </button>
+          <span className="dot" aria-hidden="true" />
+          <button className="btn-ghost" onClick={onBack}>
+            Back to Dashboard
           </button>
           <span className="dot" aria-hidden="true" />
           <span className="meta">{employee}</span>
@@ -325,7 +333,8 @@ export default function RegistrationScreen({
           <section className="panel success">
             <h2 className="panel-title">✓ Patient registered successfully</h2>
             <p className="succ-line">
-              <strong>{saved.opd}</strong> — {saved.name}
+              <span className="opd-label">OPD No.</span>
+              <strong className="opd-chip">{saved.opd}</strong> — {saved.name}
             </p>
             <p className="succ-note">Slip sent to printer.</p>
             <div className="actions">
