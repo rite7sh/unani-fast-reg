@@ -50,6 +50,14 @@ export interface DashboardStats {
   totalCount: number;
 }
 
+export interface BackupStatus {
+  lastBackupAt: string | null;
+  lastBackupFile: string | null;
+  lastBackupVerified: boolean;
+  retainedCount: number;
+  lastError: string | null;
+}
+
 // Secure context bridge - only expose what's necessary
 contextBridge.exposeInMainWorld('electron', {
   // Version information for testing
@@ -98,6 +106,9 @@ contextBridge.exposeInMainWorld('electron', {
     },
     previewNextOpdNumber: async (): Promise<string> => {
       return ipcRenderer.invoke('db:previewNextOpdNumber');
+    },
+    getBackupStatus: async (): Promise<BackupStatus> => {
+      return ipcRenderer.invoke('db:getBackupStatus');
     },
   },
 

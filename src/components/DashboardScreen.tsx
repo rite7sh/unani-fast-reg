@@ -1,6 +1,12 @@
 import { useEffect, useState } from "react";
 import AppHeader from "./AppHeader";
 
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export default function DashboardScreen({
   employee,
   onLogout,
@@ -14,6 +20,7 @@ export default function DashboardScreen({
 }) {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -26,6 +33,15 @@ export default function DashboardScreen({
       .catch((err) => {
         console.error("[Dashboard] Failed to load stats:", err);
         if (!cancelled) setError("Could not load registration counts.");
+      });
+
+    window.electron.db
+      .getBackupStatus()
+      .then((result) => {
+        if (!cancelled) setBackupStatus(result);
+      })
+      .catch((err) => {
+        console.error("[Dashboard] Failed to load backup status:", err);
       });
 
     return () => {
@@ -64,6 +80,16 @@ export default function DashboardScreen({
               <span className="dash-card-desc">Search previously registered patients</span>
             </button>
           </div>
+
+          {backupStatus && (
+            <p className={backupStatus.lastBackupVerified ? "meta-line dim backup-status" : "err backup-status"}>
+              {backupStatus.lastBackupVerified
+                ? `Backup: verified ${formatDateTime(backupStatus.lastBackupAt as string)} · ${backupStatus.retainedCount} retained`
+                : backupStatus.lastBackupFile
+                  ? `Backup: verification issue on last backup · ${backupStatus.retainedCount} retained`
+                  : "Backup: none yet"}
+            </p>
+          )}
         </section>
       </main>
     </div>

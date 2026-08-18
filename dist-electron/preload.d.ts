@@ -43,3 +43,10 @@ export interface DashboardStats {
     todayCount: number;
     totalCount: number;
 }
+export interface BackupStatus {
+    lastBackupAt: string | null;
+    lastBackupFile: string | null;
+    lastBackupVerified: boolean;
+    retainedCount: number;
+    lastError: string | null;
+}

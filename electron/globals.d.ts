@@ -50,6 +50,14 @@ declare global {
     totalCount: number;
   }
 
+  interface BackupStatus {
+    lastBackupAt: string | null;
+    lastBackupFile: string | null;
+    lastBackupVerified: boolean;
+    retainedCount: number;
+    lastError: string | null;
+  }
+
   interface DatabaseAPI {
     registerPatient: (patient: Omit<PatientData, 'id' | 'opd_no' | 'created_at' | 'updated_at'>) => Promise<PatientData>;
     checkDuplicate: (patientName: string, ageYears: number) => Promise<DuplicateCheckResult>;
@@ -62,6 +70,7 @@ declare global {
     getReturningPatientAddress: (patientName: string) => Promise<string | null>;
     getDashboardStats: () => Promise<DashboardStats>;
     previewNextOpdNumber: () => Promise<string>;
+    getBackupStatus: () => Promise<BackupStatus>;
   }
 
   interface ElectronAPI {

@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import PrintSlip from "./PrintSlip";
+import { printSlip } from "../lib/printSlip";
 
 const DIAGNOSES = [
   "Nazla (Coryza)",
@@ -77,7 +79,6 @@ const CONSULTANTS = [
 ];
 
 type SyncState = "Offline" | "Ready to sync" | "Syncing..." | "Synced" | "Sync failed";
-type Saved = { opd: string; name: string };
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -150,7 +151,27 @@ export default function RegistrationScreen({
     | "otherDiagnosis"
     | "consultant";
   const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
-  const [saved, setSaved] = useState<Saved | null>(null);
+  const [saved, setSaved] = useState<PatientData | null>(null);
+
+  // Kick off loading the bundled Urdu header font as early as possible —
+  // .print-slip is display:none on screen, so nothing visible ever needs
+  // this font outside of an actual print, meaning the browser would
+  // otherwise only discover/fetch it at print time. Starting the fetch on
+  // mount gives it the whole time the employee spends filling the form to
+  // finish, well before any print can occur.
+  useEffect(() => {
+    document.fonts.load('16pt "Noto Nastaliq Urdu"').catch(() => undefined);
+  }, []);
+
+  // Fires only after React has committed the DOM update reflecting the new
+  // `saved` value, so the hidden PrintSlip already shows the correct patient
+  // before printing captures the page — calling print() synchronously right
+  // after setSaved() would risk printing stale/empty content.
+  useEffect(() => {
+    if (saved) {
+      printSlip();
+    }
+  }, [saved]);
 
   // Preview of the OPD number that will be assigned on save. Read-only —
   // sourced from the backend, never computed here. The number actually
@@ -294,9 +315,8 @@ export default function RegistrationScreen({
         employee_id: employee,
       });
 
-      setSaved({ opd: patient.opd_no, name: patient.patient_name });
+      setSaved(patient);
       setSync("Ready to sync");
-      window.print?.();
       reset();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -355,15 +375,15 @@ export default function RegistrationScreen({
             <h2 className="panel-title">✓ Patient registered successfully</h2>
             <div className="opd-result">
               <div className="opd-result-label">OPD No.</div>
-              <div className="opd-result-value">{saved.opd}</div>
+              <div className="opd-result-value">{saved.opd_no}</div>
             </div>
             <div className="detail-row">
               <span className="lbl">Patient Name</span>
-              <div className="detail-value">{saved.name}</div>
+              <div className="detail-value">{saved.patient_name}</div>
             </div>
             <p className="succ-note">Slip sent to printer.</p>
             <div className="actions">
-              <button className="btn-secondary" onClick={() => window.print?.()}>
+              <button className="btn-secondary" onClick={printSlip}>
                 Print OPD Slip
               </button>
               <button
@@ -546,6 +566,8 @@ export default function RegistrationScreen({
           </form>
         )}
       </main>
+
+      <PrintSlip patient={saved} />
     </div>
   );
 }

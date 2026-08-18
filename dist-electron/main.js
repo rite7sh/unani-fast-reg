@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, previewNextOpdNumber, } from './database.cjs';
+import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, previewNextOpdNumber, createBackup, ensureTodayBackup, getBackupStatus, } from './database.cjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 async function findAvailableDevServer() {
@@ -78,6 +78,10 @@ app.on('ready', () => {
         return;
     }
     createWindow();
+    // Fire-and-forget: never block first paint on this.
+    ensureTodayBackup().catch((error) => {
+        console.error('[Backup] Startup backup check failed:', error);
+    });
 });
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
@@ -97,8 +101,21 @@ app.on('web-contents-created', (_, contents) => {
         return { action: 'deny' };
     });
 });
-app.on('before-quit', () => {
-    closeDatabase();
+let isQuitting = false;
+app.on('before-quit', (event) => {
+    if (isQuitting) {
+        return;
+    }
+    event.preventDefault();
+    isQuitting = true;
+    createBackup()
+        .catch((error) => {
+        console.error('[Backup] Shutdown backup attempt failed:', error);
+    })
+        .finally(() => {
+        closeDatabase();
+        app.quit();
+    });
 });
 // ============================================
 // IPC Handlers for Database Operations
@@ -211,6 +228,16 @@ ipcMain.handle('db:previewNextOpdNumber', () => {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('[IPC] db:previewNextOpdNumber failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getBackupStatus', () => {
+    try {
+        return getBackupStatus();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getBackupStatus failed:', message);
         throw error;
     }
 });

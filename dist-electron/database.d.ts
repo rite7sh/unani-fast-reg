@@ -55,4 +55,26 @@ export interface DashboardStats {
     totalCount: number;
 }
 export declare function getDashboardStats(): DashboardStats;
+export interface BackupStatus {
+    lastBackupAt: string | null;
+    lastBackupFile: string | null;
+    lastBackupVerified: boolean;
+    retainedCount: number;
+    lastError: string | null;
+}
+export declare function verifyBackup(filePath: string): boolean;
+export declare function pruneOldBackups(): {
+    removed: string[];
+    retainedCount: number;
+};
+export declare function createBackup(): Promise<{
+    success: boolean;
+    file?: string;
+    error?: string;
+}>;
+export declare function ensureTodayBackup(): Promise<{
+    ran: boolean;
+    success: boolean;
+}>;
+export declare function getBackupStatus(): BackupStatus;
 export declare function getReturningPatientAddress(patientName: string): string | null;

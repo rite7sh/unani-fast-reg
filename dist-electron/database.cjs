@@ -15,6 +15,11 @@ exports.softDeletePatient = softDeletePatient;
 exports.getDiagnoses = getDiagnoses;
 exports.getConsultants = getConsultants;
 exports.getDashboardStats = getDashboardStats;
+exports.verifyBackup = verifyBackup;
+exports.pruneOldBackups = pruneOldBackups;
+exports.createBackup = createBackup;
+exports.ensureTodayBackup = ensureTodayBackup;
+exports.getBackupStatus = getBackupStatus;
 exports.getReturningPatientAddress = getReturningPatientAddress;
 const electron_1 = require("electron");
 const node_fs_1 = __importDefault(require("node:fs"));
@@ -335,6 +340,174 @@ function getDashboardStats() {
     const todayCount = todayStmt.get(getTodayRegistrationDate()).count;
     const totalCount = totalStmt.get().count;
     return { todayCount, totalCount };
+}
+// ============================================
+// Backup / Retention
+// ============================================
+const BACKUP_RETENTION_COUNT = 14;
+const BACKUP_FILE_PREFIX = 'opd-backup-';
+const BACKUP_FILE_SUFFIX = '.db';
+let lastBackupError = null;
+function getBackupDir() {
+    const userDataPath = electron_1.app.getPath('userData');
+    const backupDir = path_1.default.join(userDataPath, 'data', 'backups');
+    if (!node_fs_1.default.existsSync(backupDir)) {
+        node_fs_1.default.mkdirSync(backupDir, { recursive: true });
+    }
+    return backupDir;
+}
+function getTodayFileStamp() {
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+}
+function backupFileName(dateStamp) {
+    return `${BACKUP_FILE_PREFIX}${dateStamp}${BACKUP_FILE_SUFFIX}`;
+}
+function listBackupFiles() {
+    const backupDir = getBackupDir();
+    return node_fs_1.default
+        .readdirSync(backupDir)
+        .filter((f) => f.startsWith(BACKUP_FILE_PREFIX) && f.endsWith(BACKUP_FILE_SUFFIX))
+        .sort();
+}
+// Opens the given file read-only and runs PRAGMA integrity_check.
+// Never touches the live database — always a separate connection to a
+// static file on disk.
+function verifyBackup(filePath) {
+    let verifyDb = null;
+    try {
+        verifyDb = new Database(filePath, { readonly: true, fileMustExist: true });
+        const result = verifyDb.pragma('integrity_check', { simple: true });
+        return result === 'ok';
+    }
+    catch (error) {
+        console.error('[Backup] Verification failed:', error instanceof Error ? error.message : String(error));
+        return false;
+    }
+    finally {
+        if (verifyDb) {
+            try {
+                verifyDb.close();
+            }
+            catch {
+                // ignore close errors on a verification-only handle
+            }
+        }
+    }
+}
+// Removes backups beyond the retention count, oldest first. Filenames
+// are YYYY-MM-DD, so a lexical sort is also a chronological sort.
+// Pure filesystem operation — never touches the live database.
+function pruneOldBackups() {
+    const files = listBackupFiles();
+    const removed = [];
+    const excess = files.length - BACKUP_RETENTION_COUNT;
+    if (excess > 0) {
+        const backupDir = getBackupDir();
+        const toRemove = files.slice(0, excess);
+        for (const f of toRemove) {
+            try {
+                node_fs_1.default.unlinkSync(path_1.default.join(backupDir, f));
+                removed.push(f);
+            }
+            catch (error) {
+                console.error(`[Backup] Failed to remove old backup ${f}:`, error instanceof Error ? error.message : String(error));
+            }
+        }
+    }
+    return { removed, retainedCount: listBackupFiles().length };
+}
+// Creates (or overwrites) today's backup using SQLite's online backup API
+// via better-sqlite3's db.backup() — never a raw file copy of the live
+// database. Writes to a .tmp file, verifies it, and only then atomically
+// renames it into place. On any failure, the live database is untouched
+// and no invalid file is left under the final name.
+async function createBackup() {
+    if (!db || !isInitialized) {
+        const error = 'Database not initialized';
+        lastBackupError = error;
+        return { success: false, error };
+    }
+    const backupDir = getBackupDir();
+    const dateStamp = getTodayFileStamp();
+    const finalName = backupFileName(dateStamp);
+    const finalPath = path_1.default.join(backupDir, finalName);
+    const tmpPath = `${finalPath}.tmp`;
+    try {
+        await db.backup(tmpPath);
+        if (!verifyBackup(tmpPath)) {
+            try {
+                node_fs_1.default.unlinkSync(tmpPath);
+            }
+            catch {
+                // ignore
+            }
+            const error = 'Backup failed integrity check';
+            console.error(`[Backup] ${error}: ${finalName}`);
+            lastBackupError = error;
+            return { success: false, error };
+        }
+        // Windows fs.renameSync throws if the destination already exists
+        // (unlike POSIX rename). createBackup() is safely re-callable within
+        // the same day, so remove any prior same-day file first.
+        if (node_fs_1.default.existsSync(finalPath)) {
+            node_fs_1.default.unlinkSync(finalPath);
+        }
+        node_fs_1.default.renameSync(tmpPath, finalPath);
+        pruneOldBackups();
+        lastBackupError = null;
+        console.log(`[Backup] Created and verified: ${finalName}`);
+        return { success: true, file: finalName };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[Backup] Failed:', message);
+        try {
+            if (node_fs_1.default.existsSync(tmpPath))
+                node_fs_1.default.unlinkSync(tmpPath);
+        }
+        catch {
+            // ignore
+        }
+        lastBackupError = message;
+        return { success: false, error: message };
+    }
+}
+// Startup path: only backs up if today's backup doesn't already exist.
+async function ensureTodayBackup() {
+    const backupDir = getBackupDir();
+    const finalPath = path_1.default.join(backupDir, backupFileName(getTodayFileStamp()));
+    if (node_fs_1.default.existsSync(finalPath)) {
+        console.log("[Backup] Today's backup already exists, skipping.");
+        return { ran: false, success: verifyBackup(finalPath) };
+    }
+    const result = await createBackup();
+    return { ran: true, success: result.success };
+}
+function getBackupStatus() {
+    const files = listBackupFiles();
+    const latest = files[files.length - 1] ?? null;
+    let lastBackupAt = null;
+    let lastBackupVerified = false;
+    if (latest) {
+        const backupDir = getBackupDir();
+        const latestPath = path_1.default.join(backupDir, latest);
+        try {
+            lastBackupAt = node_fs_1.default.statSync(latestPath).mtime.toISOString();
+        }
+        catch {
+            // ignore
+        }
+        lastBackupVerified = verifyBackup(latestPath);
+    }
+    return {
+        lastBackupAt,
+        lastBackupFile: latest,
+        lastBackupVerified,
+        retainedCount: files.length,
+        lastError: lastBackupError,
+    };
 }
 function getReturningPatientAddress(patientName) {
     if (!db || !isInitialized) {
