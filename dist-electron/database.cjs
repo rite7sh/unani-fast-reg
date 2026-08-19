@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.setConsultantActive = exports.updateConsultantName = exports.addConsultant = exports.listConsultantsAdmin = exports.setDiagnosisActive = exports.updateDiagnosisName = exports.addDiagnosis = exports.listDiagnosesAdmin = void 0;
 exports.initializeDatabase = initializeDatabase;
 exports.closeDatabase = closeDatabase;
 exports.previewNextOpdNumber = previewNextOpdNumber;
@@ -10,10 +11,16 @@ exports.registerPatient = registerPatient;
 exports.checkDuplicate = checkDuplicate;
 exports.searchPatients = searchPatients;
 exports.getPatient = getPatient;
+exports.getPatientAdmin = getPatientAdmin;
+exports.restorePatient = restorePatient;
 exports.updatePatient = updatePatient;
 exports.softDeletePatient = softDeletePatient;
 exports.getDiagnoses = getDiagnoses;
 exports.getConsultants = getConsultants;
+exports.hasAdminPassword = hasAdminPassword;
+exports.setAdminPassword = setAdminPassword;
+exports.verifyAdminPassword = verifyAdminPassword;
+exports.changeAdminPassword = changeAdminPassword;
 exports.getDashboardStats = getDashboardStats;
 exports.verifyBackup = verifyBackup;
 exports.pruneOldBackups = pruneOldBackups;
@@ -21,9 +28,13 @@ exports.createBackup = createBackup;
 exports.ensureTodayBackup = ensureTodayBackup;
 exports.getBackupStatus = getBackupStatus;
 exports.getReturningPatientAddress = getReturningPatientAddress;
+exports.getAdminAnalytics = getAdminAnalytics;
+exports.exportPatientsCsv = exportPatientsCsv;
+exports.listBackups = listBackups;
 const electron_1 = require("electron");
 const node_fs_1 = __importDefault(require("node:fs"));
 const path_1 = __importDefault(require("path"));
+const node_crypto_1 = __importDefault(require("node:crypto"));
 const Database = require('better-sqlite3');
 let db = null;
 let isInitialized = false;
@@ -73,7 +84,33 @@ function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_registration_date ON patients(registration_date);
       CREATE INDEX IF NOT EXISTS idx_patient_name ON patients(patient_name);
       CREATE INDEX IF NOT EXISTS idx_is_deleted ON patients(is_deleted);
+
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS diagnoses (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        active INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS consultants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        active INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_diagnoses_active ON diagnoses(active);
+      CREATE INDEX IF NOT EXISTS idx_consultants_active ON consultants(active);
     `);
+        seedMasterData();
         isInitialized = true;
         console.log('[Database] Initialization complete');
     }
@@ -166,12 +203,18 @@ function checkDuplicate(patientName, ageYears) {
     }
     return { isDuplicate: false };
 }
-function searchPatients(query, registrationDate) {
+// includeDeleted defaults to false, preserving Employee's exact existing
+// behavior (PatientHistoryScreen never passes it) — only Admin's patient
+// screen passes true, to also surface soft-deleted records for restore.
+function searchPatients(query, registrationDate, includeDeleted = false) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
-    const conditions = ['(patient_name LIKE ? OR opd_no LIKE ?)', 'is_deleted = 0'];
+    const conditions = ['(patient_name LIKE ? OR opd_no LIKE ?)'];
     const params = [`%${query}%`, `%${query}%`];
+    if (!includeDeleted) {
+        conditions.push('is_deleted = 0');
+    }
     if (registrationDate) {
         conditions.push('registration_date = ?');
         params.push(registrationDate);
@@ -179,7 +222,7 @@ function searchPatients(query, registrationDate) {
     const stmt = db.prepare(`
     SELECT
       id, opd_no, patient_name, age_years, age_months,
-      gender, address, diagnosis, registration_date, consultant
+      gender, address, diagnosis, registration_date, consultant, is_deleted
     FROM patients
     WHERE ${conditions.join(' AND ')}
     ORDER BY registration_date DESC
@@ -196,6 +239,23 @@ function getPatient(id) {
   `);
     return stmt.get(id) || null;
 }
+// Admin-only variant of getPatient — no is_deleted filter, so Admin can
+// open a soft-deleted record's detail (e.g. to restore it). Employee's
+// db:getPatient channel is untouched and still never returns deleted rows.
+function getPatientAdmin(id) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const stmt = db.prepare(`SELECT * FROM patients WHERE id = ?`);
+    return stmt.get(id) || null;
+}
+function restorePatient(id) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE patients SET is_deleted = 0, updated_at = ? WHERE id = ?`).run(now, id);
+}
 function updatePatient(id, updates) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
@@ -207,8 +267,18 @@ function updatePatient(id, updates) {
     }
     const updateFields = [];
     const updateValues = [];
-    // Only allow updates to specific fields
+    // Only allow updates to specific fields. OPD No. is never included here —
+    // it stays permanent/system-assigned regardless of who calls this.
+    // Employee has no UI that calls updatePatient (Print-only, per the
+    // established decision); only Admin's patient-edit screen does, with the
+    // full field set below (matches the proposal's "Administrator can unlock
+    // for backdating" for registration_date, plus name/age/gender corrections).
     const allowedFields = [
+        'patient_name',
+        'age_years',
+        'age_months',
+        'gender',
+        'registration_date',
         'address',
         'diagnosis',
         'diagnosis_other',
@@ -242,85 +312,228 @@ function softDeletePatient(id) {
   `);
     stmt.run(now, id);
 }
+// Seeded once, only when the diagnoses/consultants tables are empty (fresh
+// install or first run after this migration) — same values, same order as
+// the hardcoded lists this replaced, so existing installs see no change in
+// their dropdowns. "Other" is intentionally excluded: it's a UI sentinel
+// for free-text entry (see RegistrationScreen.tsx), not a manageable
+// diagnosis, so it's appended client-side instead of stored here.
+const SEED_DIAGNOSES = [
+    "Nazla (Coryza)",
+    "Zukam (Common Cold)",
+    "Suaal (Cough)",
+    "Zeequn Nafas (Asthma)",
+    "Zaat-ur-Riya (Pneumonia)",
+    "Sil (Tuberculosis)",
+    "Humma (Fever)",
+    "Humma Muhriqa (High Fever)",
+    "Humma Diqqiya (Hectic Fever)",
+    "Waram (Inflammation)",
+    "Waram-e-Halq (Pharyngitis)",
+    "Waram-e-Lauzatain (Tonsillitis)",
+    "Waram-e-Kabid (Hepatitis)",
+    "Waram-e-Kulya (Nephritis)",
+    "Waram-e-Masana (Cystitis)",
+    "Waja-ul-Mafasil (Arthritis)",
+    "Niqras (Gout)",
+    "Waja-ul-Zahr (Backache)",
+    "Irqun Nasa (Sciatica)",
+    "Waja-ur-Raqba (Cervical Pain)",
+    "Falij (Paralysis)",
+    "Laqwa (Facial Palsy)",
+    "Raasha (Tremor)",
+    "Sara (Epilepsy)",
+    "Suda (Headache)",
+    "Shaqiqa (Migraine)",
+    "Dawar (Vertigo)",
+    "Sahar (Insomnia)",
+    "Malikholia (Melancholia)",
+    "Bars (Vitiligo)",
+    "Bahaq (Tinea Versicolor)",
+    "Da-us-Sadaf (Psoriasis)",
+    "Quba (Ringworm)",
+    "Hikka (Pruritus)",
+    "Shara (Urticaria)",
+    "Busoor-e-Labaniya (Acne)",
+    "Da-us-Salab (Alopecia Areata)",
+    "Zof-e-Meda (Dyspepsia)",
+    "Qabz (Constipation)",
+    "Ishaal (Diarrhoea)",
+    "Zaheer (Dysentery)",
+    "Qai (Vomiting)",
+    "Yarqan (Jaundice)",
+    "Istisqa (Ascites)",
+    "Bawaseer (Piles)",
+    "Sheqaq-e-Maqad (Anal Fissure)",
+    "Deedan-e-Ama (Intestinal Worms)",
+    "Zayabetus (Diabetes Mellitus)",
+    "Zaghtud Dam Qawi (Hypertension)",
+    "Zaghtud Dam Zaeef (Hypotension)",
+    "Faqrud Dam (Anaemia)",
+    "Siman-e-Mufrit (Obesity)",
+    "Zof-e-Qalb (Cardiac Weakness)",
+    "Hasat-e-Kulya (Renal Calculi)",
+    "Salasul Baul (Enuresis)",
+    "Ihtebas-e-Baul (Urinary Retention)",
+    "Su-e-Haiz (Menstrual Disorder)",
+    "Usr-e-Tams (Dysmenorrhoea)",
+    "Kasrat-e-Tams (Menorrhagia)",
+    "Sailanur Rahm (Leucorrhoea)",
+    "Zof-e-Basar (Weak Eyesight)",
+    "Ramad (Conjunctivitis)",
+    "Waja-ul-Uzn (Earache)",
+    "Waja-ul-Asnan (Toothache)",
+];
+const SEED_CONSULTANTS = [
+    "Dr. Mohd. Ashraf — BUMS",
+    "Dr. A. R. Ansari — BUMS, MD (Moalajat)",
+    "Dr. S. Fatima — BUMS, MD (Amraz-e-Niswan)",
+    "Dr. M. Iqbal — BUMS, MD (Ilaj-bit-Tadbeer)",
+    "Dr. K. Rahman — BUMS (General OPD)",
+];
+function seedMasterData() {
+    const diagnosisCount = db.prepare('SELECT COUNT(*) AS count FROM diagnoses').get().count;
+    if (diagnosisCount === 0) {
+        const insert = db.prepare('INSERT INTO diagnoses (name, active, sort_order) VALUES (?, 1, ?)');
+        const insertAll = db.transaction((names) => {
+            names.forEach((name, index) => insert.run(name, index));
+        });
+        insertAll(SEED_DIAGNOSES);
+    }
+    const consultantCount = db.prepare('SELECT COUNT(*) AS count FROM consultants').get().count;
+    if (consultantCount === 0) {
+        const insert = db.prepare('INSERT INTO consultants (name, active, sort_order) VALUES (?, 1, ?)');
+        const insertAll = db.transaction((names) => {
+            names.forEach((name, index) => insert.run(name, index));
+        });
+        insertAll(SEED_CONSULTANTS);
+    }
+}
 function getDiagnoses() {
-    // Return hardcoded list for now (can be extended to read from database)
-    return [
-        "Nazla (Coryza)",
-        "Zukam (Common Cold)",
-        "Suaal (Cough)",
-        "Zeequn Nafas (Asthma)",
-        "Zaat-ur-Riya (Pneumonia)",
-        "Sil (Tuberculosis)",
-        "Humma (Fever)",
-        "Humma Muhriqa (High Fever)",
-        "Humma Diqqiya (Hectic Fever)",
-        "Waram (Inflammation)",
-        "Waram-e-Halq (Pharyngitis)",
-        "Waram-e-Lauzatain (Tonsillitis)",
-        "Waram-e-Kabid (Hepatitis)",
-        "Waram-e-Kulya (Nephritis)",
-        "Waram-e-Masana (Cystitis)",
-        "Waja-ul-Mafasil (Arthritis)",
-        "Niqras (Gout)",
-        "Waja-ul-Zahr (Backache)",
-        "Irqun Nasa (Sciatica)",
-        "Waja-ur-Raqba (Cervical Pain)",
-        "Falij (Paralysis)",
-        "Laqwa (Facial Palsy)",
-        "Raasha (Tremor)",
-        "Sara (Epilepsy)",
-        "Suda (Headache)",
-        "Shaqiqa (Migraine)",
-        "Dawar (Vertigo)",
-        "Sahar (Insomnia)",
-        "Malikholia (Melancholia)",
-        "Bars (Vitiligo)",
-        "Bahaq (Tinea Versicolor)",
-        "Da-us-Sadaf (Psoriasis)",
-        "Quba (Ringworm)",
-        "Hikka (Pruritus)",
-        "Shara (Urticaria)",
-        "Busoor-e-Labaniya (Acne)",
-        "Da-us-Salab (Alopecia Areata)",
-        "Zof-e-Meda (Dyspepsia)",
-        "Qabz (Constipation)",
-        "Ishaal (Diarrhoea)",
-        "Zaheer (Dysentery)",
-        "Qai (Vomiting)",
-        "Yarqan (Jaundice)",
-        "Istisqa (Ascites)",
-        "Bawaseer (Piles)",
-        "Sheqaq-e-Maqad (Anal Fissure)",
-        "Deedan-e-Ama (Intestinal Worms)",
-        "Zayabetus (Diabetes Mellitus)",
-        "Zaghtud Dam Qawi (Hypertension)",
-        "Zaghtud Dam Zaeef (Hypotension)",
-        "Faqrud Dam (Anaemia)",
-        "Siman-e-Mufrit (Obesity)",
-        "Zof-e-Qalb (Cardiac Weakness)",
-        "Hasat-e-Kulya (Renal Calculi)",
-        "Salasul Baul (Enuresis)",
-        "Ihtebas-e-Baul (Urinary Retention)",
-        "Su-e-Haiz (Menstrual Disorder)",
-        "Usr-e-Tams (Dysmenorrhoea)",
-        "Kasrat-e-Tams (Menorrhagia)",
-        "Sailanur Rahm (Leucorrhoea)",
-        "Zof-e-Basar (Weak Eyesight)",
-        "Ramad (Conjunctivitis)",
-        "Waja-ul-Uzn (Earache)",
-        "Waja-ul-Asnan (Toothache)",
-        "Other",
-    ];
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const rows = db.prepare('SELECT name FROM diagnoses WHERE active = 1 ORDER BY sort_order').all();
+    return rows.map((r) => r.name);
 }
 function getConsultants() {
-    // Return hardcoded list for now (can be extended to read from database)
-    return [
-        "Dr. Mohd. Ashraf — BUMS",
-        "Dr. A. R. Ansari — BUMS, MD (Moalajat)",
-        "Dr. S. Fatima — BUMS, MD (Amraz-e-Niswan)",
-        "Dr. M. Iqbal — BUMS, MD (Ilaj-bit-Tadbeer)",
-        "Dr. K. Rahman — BUMS (General OPD)",
-    ];
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const rows = db.prepare('SELECT name FROM consultants WHERE active = 1 ORDER BY sort_order').all();
+    return rows.map((r) => r.name);
+}
+function listMasterData(table) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const rows = db.prepare(`SELECT id, name, active, sort_order FROM ${table} ORDER BY sort_order`).all();
+    return rows.map((r) => ({ id: r.id, name: r.name, active: r.active === 1, sort_order: r.sort_order }));
+}
+function addMasterDataItem(table, name) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const trimmed = name.trim();
+    if (!trimmed) {
+        throw new Error('Name is required');
+    }
+    const maxOrder = db.prepare(`SELECT MAX(sort_order) AS maxOrder FROM ${table}`).get().maxOrder;
+    const nextOrder = (maxOrder ?? -1) + 1;
+    const result = db
+        .prepare(`INSERT INTO ${table} (name, active, sort_order) VALUES (?, 1, ?)`)
+        .run(trimmed, nextOrder);
+    return { id: result.lastInsertRowid, name: trimmed, active: true, sort_order: nextOrder };
+}
+function updateMasterDataName(table, id, name) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const trimmed = name.trim();
+    if (!trimmed) {
+        throw new Error('Name is required');
+    }
+    db.prepare(`UPDATE ${table} SET name = ? WHERE id = ?`).run(trimmed, id);
+}
+function setMasterDataActive(table, id, active) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    db.prepare(`UPDATE ${table} SET active = ? WHERE id = ?`).run(active ? 1 : 0, id);
+}
+const listDiagnosesAdmin = () => listMasterData('diagnoses');
+exports.listDiagnosesAdmin = listDiagnosesAdmin;
+const addDiagnosis = (name) => addMasterDataItem('diagnoses', name);
+exports.addDiagnosis = addDiagnosis;
+const updateDiagnosisName = (id, name) => updateMasterDataName('diagnoses', id, name);
+exports.updateDiagnosisName = updateDiagnosisName;
+const setDiagnosisActive = (id, active) => setMasterDataActive('diagnoses', id, active);
+exports.setDiagnosisActive = setDiagnosisActive;
+const listConsultantsAdmin = () => listMasterData('consultants');
+exports.listConsultantsAdmin = listConsultantsAdmin;
+const addConsultant = (name) => addMasterDataItem('consultants', name);
+exports.addConsultant = addConsultant;
+const updateConsultantName = (id, name) => updateMasterDataName('consultants', id, name);
+exports.updateConsultantName = updateConsultantName;
+const setConsultantActive = (id, active) => setMasterDataActive('consultants', id, active);
+exports.setConsultantActive = setConsultantActive;
+// ============================================
+// Admin — Authentication
+// ============================================
+const ADMIN_PASSWORD_SETTING_KEY = 'admin_password';
+const SCRYPT_KEYLEN = 64;
+function hashPassword(password) {
+    const salt = node_crypto_1.default.randomBytes(16).toString('hex');
+    const hash = node_crypto_1.default.scryptSync(password, salt, SCRYPT_KEYLEN).toString('hex');
+    return `${salt}:${hash}`;
+}
+function verifyPasswordHash(password, stored) {
+    const [salt, hash] = stored.split(':');
+    if (!salt || !hash)
+        return false;
+    const candidate = node_crypto_1.default.scryptSync(password, salt, SCRYPT_KEYLEN);
+    const expected = Buffer.from(hash, 'hex');
+    if (candidate.length !== expected.length)
+        return false;
+    return node_crypto_1.default.timingSafeEqual(candidate, expected);
+}
+function hasAdminPassword() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(ADMIN_PASSWORD_SETTING_KEY);
+    return !!row;
+}
+function setAdminPassword(password) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    if (!password || password.length < 6) {
+        throw new Error('Password must be at least 6 characters');
+    }
+    const hashed = hashPassword(password);
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(ADMIN_PASSWORD_SETTING_KEY, hashed, now);
+}
+function verifyAdminPassword(password) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(ADMIN_PASSWORD_SETTING_KEY);
+    if (!row)
+        return false;
+    return verifyPasswordHash(password, row.value);
+}
+// Requires the current password to verify successfully before setting the
+// new one — never overwrites the password based on new-password input
+// alone. Returns false (no change made) if currentPassword is wrong.
+function changeAdminPassword(currentPassword, newPassword) {
+    if (!verifyAdminPassword(currentPassword)) {
+        return false;
+    }
+    setAdminPassword(newPassword);
+    return true;
 }
 function getTodayRegistrationDate() {
     const today = new Date();
@@ -521,4 +734,135 @@ function getReturningPatientAddress(patientName) {
   `);
     const result = stmt.get(patientName);
     return result?.address || null;
+}
+// All counts are all-time (never "today") — the Employee Dashboard already
+// owns the daily-count concept via getDashboardStats(); this is
+// deliberately the total/overall view instead.
+function getAdminAnalytics() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const totalRegistrations = db.prepare('SELECT COUNT(*) AS count FROM patients WHERE is_deleted = 0').get().count;
+    const totalDiagnosesActive = db.prepare('SELECT COUNT(*) AS count FROM diagnoses WHERE active = 1').get().count;
+    const totalConsultantsActive = db.prepare('SELECT COUNT(*) AS count FROM consultants WHERE active = 1').get().count;
+    const genderCounts = db
+        .prepare(`SELECT gender AS label, COUNT(*) AS count FROM patients
+         WHERE is_deleted = 0 GROUP BY gender ORDER BY count DESC`)
+        .all();
+    const consultantCounts = db
+        .prepare(`SELECT consultant AS label, COUNT(*) AS count FROM patients
+         WHERE is_deleted = 0 GROUP BY consultant ORDER BY count DESC`)
+        .all();
+    const diagnosisCounts = db
+        .prepare(`SELECT diagnosis AS label, COUNT(*) AS count FROM patients
+         WHERE is_deleted = 0 GROUP BY diagnosis ORDER BY count DESC LIMIT 10`)
+        .all();
+    // Keyed off created_at (ISO, e.g. "2026-08-18T10:23:45.123Z") rather than
+    // registration_date (DD/MM/YYYY text, not sortable/parseable in SQLite).
+    const dailyCounts = db
+        .prepare(`SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS count
+         FROM patients
+         WHERE is_deleted = 0 AND created_at >= datetime('now', '-30 days')
+         GROUP BY date
+         ORDER BY date ASC`)
+        .all();
+    return {
+        totalRegistrations,
+        totalDiagnosesActive,
+        totalConsultantsActive,
+        genderCounts,
+        consultantCounts,
+        diagnosisCounts,
+        dailyCounts,
+    };
+}
+function csvEscape(value) {
+    const s = value === null || value === undefined ? '' : String(value);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+function exportPatientsCsv(filters) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const conditions = ['is_deleted = 0'];
+    const params = [];
+    if (filters.fromDate) {
+        conditions.push('substr(created_at, 1, 10) >= ?');
+        params.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+        conditions.push('substr(created_at, 1, 10) <= ?');
+        params.push(filters.toDate);
+    }
+    if (filters.gender) {
+        conditions.push('gender = ?');
+        params.push(filters.gender);
+    }
+    if (filters.consultant) {
+        conditions.push('consultant = ?');
+        params.push(filters.consultant);
+    }
+    if (filters.diagnosis) {
+        conditions.push('diagnosis = ?');
+        params.push(filters.diagnosis);
+    }
+    const rows = db
+        .prepare(`SELECT opd_no, registration_date, patient_name, age_years, age_months, gender, address,
+              diagnosis, diagnosis_other, consultant, employee_id, created_at
+       FROM patients
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY created_at ASC`)
+        .all(...params);
+    const headers = [
+        'OPD No.',
+        'Registration Date',
+        'Patient Name',
+        'Age (Years)',
+        'Age (Months)',
+        'Gender',
+        'Address',
+        'Diagnosis',
+        'Diagnosis (Other)',
+        'Consultant',
+        'Registered By',
+        'Created At',
+    ];
+    const lines = [headers.join(',')];
+    for (const r of rows) {
+        lines.push([
+            r.opd_no,
+            r.registration_date,
+            r.patient_name,
+            r.age_years,
+            r.age_months,
+            r.gender,
+            r.address,
+            r.diagnosis,
+            r.diagnosis_other,
+            r.consultant,
+            r.employee_id,
+            r.created_at,
+        ]
+            .map(csvEscape)
+            .join(','));
+    }
+    return lines.join('\r\n');
+}
+// Newest first. Reuses the same file-listing/verification primitives as
+// getBackupStatus(), just returning every retained file instead of only
+// the latest.
+function listBackups() {
+    const backupDir = getBackupDir();
+    return listBackupFiles()
+        .map((f) => {
+        const filePath = path_1.default.join(backupDir, f);
+        const stat = node_fs_1.default.statSync(filePath);
+        return {
+            file: f,
+            createdAt: stat.mtime.toISOString(),
+            sizeBytes: stat.size,
+            verified: verifyBackup(filePath),
+        };
+    })
+        .reverse();
 }

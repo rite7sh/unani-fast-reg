@@ -2,82 +2,6 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEven
 import PrintSlip from "./PrintSlip";
 import { printSlip } from "../lib/printSlip";
 
-const DIAGNOSES = [
-  "Nazla (Coryza)",
-  "Zukam (Common Cold)",
-  "Suaal (Cough)",
-  "Zeequn Nafas (Asthma)",
-  "Zaat-ur-Riya (Pneumonia)",
-  "Sil (Tuberculosis)",
-  "Humma (Fever)",
-  "Humma Muhriqa (High Fever)",
-  "Humma Diqqiya (Hectic Fever)",
-  "Waram (Inflammation)",
-  "Waram-e-Halq (Pharyngitis)",
-  "Waram-e-Lauzatain (Tonsillitis)",
-  "Waram-e-Kabid (Hepatitis)",
-  "Waram-e-Kulya (Nephritis)",
-  "Waram-e-Masana (Cystitis)",
-  "Waja-ul-Mafasil (Arthritis)",
-  "Niqras (Gout)",
-  "Waja-ul-Zahr (Backache)",
-  "Irqun Nasa (Sciatica)",
-  "Waja-ur-Raqba (Cervical Pain)",
-  "Falij (Paralysis)",
-  "Laqwa (Facial Palsy)",
-  "Raasha (Tremor)",
-  "Sara (Epilepsy)",
-  "Suda (Headache)",
-  "Shaqiqa (Migraine)",
-  "Dawar (Vertigo)",
-  "Sahar (Insomnia)",
-  "Malikholia (Melancholia)",
-  "Bars (Vitiligo)",
-  "Bahaq (Tinea Versicolor)",
-  "Da-us-Sadaf (Psoriasis)",
-  "Quba (Ringworm)",
-  "Hikka (Pruritus)",
-  "Shara (Urticaria)",
-  "Busoor-e-Labaniya (Acne)",
-  "Da-us-Salab (Alopecia Areata)",
-  "Zof-e-Meda (Dyspepsia)",
-  "Qabz (Constipation)",
-  "Ishaal (Diarrhoea)",
-  "Zaheer (Dysentery)",
-  "Qai (Vomiting)",
-  "Yarqan (Jaundice)",
-  "Istisqa (Ascites)",
-  "Bawaseer (Piles)",
-  "Sheqaq-e-Maqad (Anal Fissure)",
-  "Deedan-e-Ama (Intestinal Worms)",
-  "Zayabetus (Diabetes Mellitus)",
-  "Zaghtud Dam Qawi (Hypertension)",
-  "Zaghtud Dam Zaeef (Hypotension)",
-  "Faqrud Dam (Anaemia)",
-  "Siman-e-Mufrit (Obesity)",
-  "Zof-e-Qalb (Cardiac Weakness)",
-  "Hasat-e-Kulya (Renal Calculi)",
-  "Salasul Baul (Enuresis)",
-  "Ihtebas-e-Baul (Urinary Retention)",
-  "Su-e-Haiz (Menstrual Disorder)",
-  "Usr-e-Tams (Dysmenorrhoea)",
-  "Kasrat-e-Tams (Menorrhagia)",
-  "Sailanur Rahm (Leucorrhoea)",
-  "Zof-e-Basar (Weak Eyesight)",
-  "Ramad (Conjunctivitis)",
-  "Waja-ul-Uzn (Earache)",
-  "Waja-ul-Asnan (Toothache)",
-  "Other",
-];
-
-const CONSULTANTS = [
-  "Dr. Mohd. Ashraf — BUMS",
-  "Dr. A. R. Ansari — BUMS, MD (Moalajat)",
-  "Dr. S. Fatima — BUMS, MD (Amraz-e-Niswan)",
-  "Dr. M. Iqbal — BUMS, MD (Ilaj-bit-Tadbeer)",
-  "Dr. K. Rahman — BUMS (General OPD)",
-];
-
 type SyncState = "Offline" | "Ready to sync" | "Syncing..." | "Synced" | "Sync failed";
 
 function pad(n: number) {
@@ -152,6 +76,33 @@ export default function RegistrationScreen({
     | "consultant";
   const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [saved, setSaved] = useState<PatientData | null>(null);
+
+  // "Other" is a UI-only sentinel for free-text diagnosis entry, not a
+  // manageable master-data row — appended client-side after the real,
+  // admin-managed list loads. Diagnoses/consultants used to be hardcoded
+  // here; they're now fetched so Admin's master-data changes take effect
+  // without a rebuild.
+  const [diagnosisOptions, setDiagnosisOptions] = useState<string[]>([]);
+  const [consultantOptions, setConsultantOptions] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.electron.db
+      .getDiagnoses()
+      .then((list) => {
+        if (!cancelled) setDiagnosisOptions([...list, "Other"]);
+      })
+      .catch((err) => console.error("[Registration] Failed to load diagnoses:", err));
+    window.electron.db
+      .getConsultants()
+      .then((list) => {
+        if (!cancelled) setConsultantOptions(list);
+      })
+      .catch((err) => console.error("[Registration] Failed to load consultants:", err));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Kick off loading the bundled Urdu header font as early as possible —
   // .print-slip is display:none on screen, so nothing visible ever needs
@@ -513,7 +464,7 @@ export default function RegistrationScreen({
                   onChange={(e) => setDiagnosis(e.target.value)}
                 />
                 <datalist id="diag-list">
-                  {DIAGNOSES.map((d) => (
+                  {diagnosisOptions.map((d) => (
                     <option key={d} value={d} />
                   ))}
                 </datalist>
@@ -545,7 +496,7 @@ export default function RegistrationScreen({
                   onChange={(e) => setConsultant(e.target.value)}
                 >
                   <option value="">Select consultant</option>
-                  {CONSULTANTS.map((c) => (
+                  {consultantOptions.map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>

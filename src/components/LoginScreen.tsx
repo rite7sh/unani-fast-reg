@@ -1,6 +1,12 @@
 import { useState, type FormEvent } from "react";
 
-export default function LoginScreen({ onLogin }: { onLogin: (name: string) => void }) {
+export default function LoginScreen({
+  onLogin,
+  onAdminLogin,
+}: {
+  onLogin: (name: string) => void;
+  onAdminLogin: () => void;
+}) {
   const [id, setId] = useState("");
   const [pw, setPw] = useState("");
   const [show, setShow] = useState(false);
@@ -73,7 +79,12 @@ export default function LoginScreen({ onLogin }: { onLogin: (name: string) => vo
           Sign In
         </button>
 
-        <p className="foot">Internal use only · v1.0.0</p>
+        <p className="foot">
+          Internal use only · v1.0.0 ·{" "}
+          <button type="button" className="admin-login-link" onClick={onAdminLogin}>
+            Admin Login
+          </button>
+        </p>
       </form>
     </main>
   );

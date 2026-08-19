@@ -21,8 +21,8 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         checkDuplicate: async (patientName, ageYears) => {
             return electron_1.ipcRenderer.invoke('db:checkDuplicate', patientName, ageYears);
         },
-        searchPatients: async (query, registrationDate) => {
-            return electron_1.ipcRenderer.invoke('db:searchPatients', query, registrationDate);
+        searchPatients: async (query, registrationDate, includeDeleted) => {
+            return electron_1.ipcRenderer.invoke('db:searchPatients', query, registrationDate, includeDeleted);
         },
         getPatient: async (id) => {
             return electron_1.ipcRenderer.invoke('db:getPatient', id);
@@ -50,6 +50,68 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         },
         getBackupStatus: async () => {
             return electron_1.ipcRenderer.invoke('db:getBackupStatus');
+        },
+    },
+    // Admin API — auth + master-data management. Only ever called from
+    // Admin screens, which only render after a successful admin login; see
+    // src/main.tsx. Not a hardened per-call session/token system — this
+    // remains a single trusted local renderer (contextIsolation/sandbox/
+    // nodeIntegration unchanged), matching the existing Employee login's
+    // trust model.
+    admin: {
+        hasPassword: async () => {
+            return electron_1.ipcRenderer.invoke('admin:hasPassword');
+        },
+        setPassword: async (password) => {
+            return electron_1.ipcRenderer.invoke('admin:setPassword', password);
+        },
+        login: async (password) => {
+            return electron_1.ipcRenderer.invoke('admin:login', password);
+        },
+        changePassword: async (currentPassword, newPassword) => {
+            return electron_1.ipcRenderer.invoke('admin:changePassword', currentPassword, newPassword);
+        },
+        listDiagnoses: async () => {
+            return electron_1.ipcRenderer.invoke('admin:listDiagnoses');
+        },
+        addDiagnosis: async (name) => {
+            return electron_1.ipcRenderer.invoke('admin:addDiagnosis', name);
+        },
+        updateDiagnosis: async (id, name) => {
+            return electron_1.ipcRenderer.invoke('admin:updateDiagnosis', id, name);
+        },
+        setDiagnosisActive: async (id, active) => {
+            return electron_1.ipcRenderer.invoke('admin:setDiagnosisActive', id, active);
+        },
+        listConsultants: async () => {
+            return electron_1.ipcRenderer.invoke('admin:listConsultants');
+        },
+        addConsultant: async (name) => {
+            return electron_1.ipcRenderer.invoke('admin:addConsultant', name);
+        },
+        updateConsultant: async (id, name) => {
+            return electron_1.ipcRenderer.invoke('admin:updateConsultant', id, name);
+        },
+        setConsultantActive: async (id, active) => {
+            return electron_1.ipcRenderer.invoke('admin:setConsultantActive', id, active);
+        },
+        getAnalytics: async () => {
+            return electron_1.ipcRenderer.invoke('admin:getAnalytics');
+        },
+        getPatient: async (id) => {
+            return electron_1.ipcRenderer.invoke('admin:getPatient', id);
+        },
+        restorePatient: async (id) => {
+            return electron_1.ipcRenderer.invoke('admin:restorePatient', id);
+        },
+        exportCsv: async (filters) => {
+            return electron_1.ipcRenderer.invoke('admin:exportCsv', filters);
+        },
+        createBackupNow: async () => {
+            return electron_1.ipcRenderer.invoke('admin:createBackupNow');
+        },
+        listBackups: async () => {
+            return electron_1.ipcRenderer.invoke('admin:listBackups');
         },
     },
     // IPC for future use (add specific methods as needed)

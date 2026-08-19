@@ -38,6 +38,7 @@ export interface SearchResult {
     diagnosis: string;
     registration_date: string;
     consultant: string;
+    is_deleted: number;
 }
 export interface DashboardStats {
     todayCount: number;
@@ -49,4 +50,44 @@ export interface BackupStatus {
     lastBackupVerified: boolean;
     retainedCount: number;
     lastError: string | null;
+}
+export interface MasterDataItem {
+    id: number;
+    name: string;
+    active: boolean;
+    sort_order: number;
+}
+export interface AdminAnalytics {
+    totalRegistrations: number;
+    totalDiagnosesActive: number;
+    totalConsultantsActive: number;
+    genderCounts: {
+        label: string;
+        count: number;
+    }[];
+    consultantCounts: {
+        label: string;
+        count: number;
+    }[];
+    diagnosisCounts: {
+        label: string;
+        count: number;
+    }[];
+    dailyCounts: {
+        date: string;
+        count: number;
+    }[];
+}
+export interface CsvExportFilters {
+    fromDate?: string;
+    toDate?: string;
+    gender?: string;
+    consultant?: string;
+    diagnosis?: string;
+}
+export interface BackupFileInfo {
+    file: string;
+    createdAt: string;
+    sizeBytes: number;
+    verified: boolean;
 }

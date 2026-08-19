@@ -43,6 +43,7 @@ declare global {
     diagnosis: string;
     registration_date: string;
     consultant: string;
+    is_deleted: number;
   }
 
   interface DashboardStats {
@@ -58,10 +59,63 @@ declare global {
     lastError: string | null;
   }
 
+  interface MasterDataItem {
+    id: number;
+    name: string;
+    active: boolean;
+    sort_order: number;
+  }
+
+  interface AdminAnalytics {
+    totalRegistrations: number;
+    totalDiagnosesActive: number;
+    totalConsultantsActive: number;
+    genderCounts: { label: string; count: number }[];
+    consultantCounts: { label: string; count: number }[];
+    diagnosisCounts: { label: string; count: number }[];
+    dailyCounts: { date: string; count: number }[];
+  }
+
+  interface CsvExportFilters {
+    fromDate?: string;
+    toDate?: string;
+    gender?: string;
+    consultant?: string;
+    diagnosis?: string;
+  }
+
+  interface BackupFileInfo {
+    file: string;
+    createdAt: string;
+    sizeBytes: number;
+    verified: boolean;
+  }
+
+  interface AdminAPI {
+    hasPassword: () => Promise<boolean>;
+    setPassword: (password: string) => Promise<{ success: boolean }>;
+    login: (password: string) => Promise<{ success: boolean }>;
+    changePassword: (currentPassword: string, newPassword: string) => Promise<{ success: boolean }>;
+    listDiagnoses: () => Promise<MasterDataItem[]>;
+    addDiagnosis: (name: string) => Promise<MasterDataItem>;
+    updateDiagnosis: (id: number, name: string) => Promise<{ success: boolean }>;
+    setDiagnosisActive: (id: number, active: boolean) => Promise<{ success: boolean }>;
+    listConsultants: () => Promise<MasterDataItem[]>;
+    addConsultant: (name: string) => Promise<MasterDataItem>;
+    updateConsultant: (id: number, name: string) => Promise<{ success: boolean }>;
+    setConsultantActive: (id: number, active: boolean) => Promise<{ success: boolean }>;
+    getAnalytics: () => Promise<AdminAnalytics>;
+    getPatient: (id: number) => Promise<PatientData | null>;
+    restorePatient: (id: number) => Promise<{ success: boolean }>;
+    exportCsv: (filters: CsvExportFilters) => Promise<{ success: boolean; canceled?: boolean; filePath?: string }>;
+    createBackupNow: () => Promise<{ success: boolean; file?: string; error?: string }>;
+    listBackups: () => Promise<BackupFileInfo[]>;
+  }
+
   interface DatabaseAPI {
     registerPatient: (patient: Omit<PatientData, 'id' | 'opd_no' | 'created_at' | 'updated_at'>) => Promise<PatientData>;
     checkDuplicate: (patientName: string, ageYears: number) => Promise<DuplicateCheckResult>;
-    searchPatients: (query: string, registrationDate?: string) => Promise<SearchResult[]>;
+    searchPatients: (query: string, registrationDate?: string, includeDeleted?: boolean) => Promise<SearchResult[]>;
     getPatient: (id: number) => Promise<PatientData | null>;
     updatePatient: (id: number, updates: Partial<PatientData>) => Promise<PatientData>;
     softDeletePatient: (id: number) => Promise<{ success: boolean }>;
@@ -83,6 +137,7 @@ declare global {
       ping: () => string;
     };
     db: DatabaseAPI;
+    admin: AdminAPI;
     ipc: {
       send: (channel: string, data?: unknown) => void;
       receive: (channel: string, callback: (data: unknown) => void) => void;

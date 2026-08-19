@@ -43,6 +43,7 @@ export interface SearchResult {
   diagnosis: string;
   registration_date: string;
   consultant: string;
+  is_deleted: number;
 }
 
 export interface DashboardStats {
@@ -56,6 +57,38 @@ export interface BackupStatus {
   lastBackupVerified: boolean;
   retainedCount: number;
   lastError: string | null;
+}
+
+export interface MasterDataItem {
+  id: number;
+  name: string;
+  active: boolean;
+  sort_order: number;
+}
+
+export interface AdminAnalytics {
+  totalRegistrations: number;
+  totalDiagnosesActive: number;
+  totalConsultantsActive: number;
+  genderCounts: { label: string; count: number }[];
+  consultantCounts: { label: string; count: number }[];
+  diagnosisCounts: { label: string; count: number }[];
+  dailyCounts: { date: string; count: number }[];
+}
+
+export interface CsvExportFilters {
+  fromDate?: string;
+  toDate?: string;
+  gender?: string;
+  consultant?: string;
+  diagnosis?: string;
+}
+
+export interface BackupFileInfo {
+  file: string;
+  createdAt: string;
+  sizeBytes: number;
+  verified: boolean;
 }
 
 // Secure context bridge - only expose what's necessary
@@ -80,8 +113,8 @@ contextBridge.exposeInMainWorld('electron', {
     checkDuplicate: async (patientName: string, ageYears: number) => {
       return ipcRenderer.invoke('db:checkDuplicate', patientName, ageYears);
     },
-    searchPatients: async (query: string, registrationDate?: string) => {
-      return ipcRenderer.invoke('db:searchPatients', query, registrationDate);
+    searchPatients: async (query: string, registrationDate?: string, includeDeleted?: boolean) => {
+      return ipcRenderer.invoke('db:searchPatients', query, registrationDate, includeDeleted);
     },
     getPatient: async (id: number) => {
       return ipcRenderer.invoke('db:getPatient', id);
@@ -109,6 +142,71 @@ contextBridge.exposeInMainWorld('electron', {
     },
     getBackupStatus: async (): Promise<BackupStatus> => {
       return ipcRenderer.invoke('db:getBackupStatus');
+    },
+  },
+
+  // Admin API — auth + master-data management. Only ever called from
+  // Admin screens, which only render after a successful admin login; see
+  // src/main.tsx. Not a hardened per-call session/token system — this
+  // remains a single trusted local renderer (contextIsolation/sandbox/
+  // nodeIntegration unchanged), matching the existing Employee login's
+  // trust model.
+  admin: {
+    hasPassword: async (): Promise<boolean> => {
+      return ipcRenderer.invoke('admin:hasPassword');
+    },
+    setPassword: async (password: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:setPassword', password);
+    },
+    login: async (password: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:login', password);
+    },
+    changePassword: async (currentPassword: string, newPassword: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:changePassword', currentPassword, newPassword);
+    },
+    listDiagnoses: async (): Promise<MasterDataItem[]> => {
+      return ipcRenderer.invoke('admin:listDiagnoses');
+    },
+    addDiagnosis: async (name: string): Promise<MasterDataItem> => {
+      return ipcRenderer.invoke('admin:addDiagnosis', name);
+    },
+    updateDiagnosis: async (id: number, name: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:updateDiagnosis', id, name);
+    },
+    setDiagnosisActive: async (id: number, active: boolean): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:setDiagnosisActive', id, active);
+    },
+    listConsultants: async (): Promise<MasterDataItem[]> => {
+      return ipcRenderer.invoke('admin:listConsultants');
+    },
+    addConsultant: async (name: string): Promise<MasterDataItem> => {
+      return ipcRenderer.invoke('admin:addConsultant', name);
+    },
+    updateConsultant: async (id: number, name: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:updateConsultant', id, name);
+    },
+    setConsultantActive: async (id: number, active: boolean): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:setConsultantActive', id, active);
+    },
+    getAnalytics: async (): Promise<AdminAnalytics> => {
+      return ipcRenderer.invoke('admin:getAnalytics');
+    },
+    getPatient: async (id: number): Promise<PatientData | null> => {
+      return ipcRenderer.invoke('admin:getPatient', id);
+    },
+    restorePatient: async (id: number): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:restorePatient', id);
+    },
+    exportCsv: async (
+      filters: CsvExportFilters
+    ): Promise<{ success: boolean; canceled?: boolean; filePath?: string }> => {
+      return ipcRenderer.invoke('admin:exportCsv', filters);
+    },
+    createBackupNow: async (): Promise<{ success: boolean; file?: string; error?: string }> => {
+      return ipcRenderer.invoke('admin:createBackupNow');
+    },
+    listBackups: async (): Promise<BackupFileInfo[]> => {
+      return ipcRenderer.invoke('admin:listBackups');
     },
   },
 

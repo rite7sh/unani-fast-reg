@@ -212,6 +212,11 @@ select.inp { padding-left: 6px; }
 .pw-row .btn-ghost { color: var(--hg-700); font-weight: 600; flex: none; }
 .login-card .lbl { margin-top: 12px; }
 .foot { margin: 16px 0 0; text-align: center; font-size: 11.5px; color: var(--muted); }
+.admin-login-link {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 11.5px;
+  color: var(--hg-700); text-decoration: underline; cursor: pointer;
+}
+.admin-login-link:hover { color: var(--hg-600); }
 
 /* App shell */
 .appbar {
@@ -347,6 +352,112 @@ select.inp { padding-left: 6px; }
   .stats, .dash-actions { flex-direction: column; }
   .detail-grid { grid-template-columns: 1fr; }
 }
+
+/* Admin */
+.panel-title-row {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--line);
+}
+.panel-title.no-border { margin: 0; padding-bottom: 0; border-bottom: 0; }
+
+.stat-tile-link {
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+  transition: border-color .12s ease, background-color .12s ease;
+}
+.stat-tile-link:hover { border-color: var(--hg-600); background: var(--hg-100); }
+.stat-tile-link:focus-visible { outline: 2px solid var(--hg-600); outline-offset: 2px; }
+
+.table-actions { display: flex; gap: 8px; align-items: center; }
+
+.admin-nav { display: flex; gap: 4px; }
+.admin-nav-item {
+  height: 34px; padding: 0 12px; border: 0; background: transparent; color: #d7e7e0;
+  font-size: 13px; border-radius: 4px; cursor: pointer;
+}
+.admin-nav-item:hover { background: rgba(255,255,255,.1); }
+.admin-nav-item.active { background: rgba(255,255,255,.16); color: #fff; font-weight: 600; }
+
+.admin-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 4px; }
+.chart-card {
+  border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; background: #fff;
+}
+.chart-card-wide { grid-column: 1 / -1; }
+.chart-card-title { margin: 0 0 12px; font-size: 13.5px; font-weight: 700; color: var(--hg-900); }
+.chart-empty { color: var(--muted); font-size: 13px; }
+
+.chart-bar { display: flex; flex-direction: column; }
+.chart-bar-svg { width: 100%; height: 160px; display: block; }
+.chart-bar-labels { display: flex; margin-top: 4px; }
+.chart-bar-label {
+  font-size: 10.5px; color: var(--muted); text-align: center; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+
+.chart-hbar { display: flex; flex-direction: column; gap: 8px; }
+.chart-hbar-row { display: grid; grid-template-columns: 120px 1fr 32px; align-items: center; gap: 8px; }
+.chart-hbar-label { font-size: 12.5px; color: var(--text); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chart-hbar-track { height: 12px; background: var(--hg-050); border-radius: 3px; overflow: hidden; }
+.chart-hbar-fill { height: 100%; border-radius: 3px; }
+.chart-hbar-value { font-size: 12.5px; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+
+.chart-donut { display: flex; align-items: center; gap: 20px; }
+.chart-donut-svg { width: 120px; height: 120px; flex: none; }
+.chart-donut-total { font-size: 7px; font-weight: 700; fill: var(--hg-900); }
+.chart-legend { list-style: none; margin: 0; padding: 0; font-size: 12.5px; color: var(--text); display: flex; flex-direction: column; gap: 6px; }
+.chart-legend-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; }
+
+@media (max-width: 900px) {
+  .admin-charts { grid-template-columns: 1fr; }
+  .admin-nav { flex-wrap: wrap; }
+}
+
+.master-add-form { display: flex; gap: 10px; margin-bottom: 16px; }
+.master-add-form .inp { flex: 1; }
+.master-table td { vertical-align: middle; }
+
+/* Admin Patients' table is 9 columns wide, three of them free-text
+   (Name/Diagnosis/Consultant) that can legitimately run 100+ characters.
+   That combination doesn't fit the standard 900px .panel without either
+   excessive wrapping on the free-text columns or starving OPD No./
+   Actions below a comfortable width — so this screen's panels (search +
+   detail) get a wider variant instead of fighting that budget. Every
+   other screen keeps the standard .panel width unchanged. */
+.panel-wide { max-width: 1200px; }
+
+/* table-layout:fixed (not auto) — auto let the browser's own content-fit
+   heuristics decide column widths, which produced two problems with data
+   this variable: badly uneven splits (Patient Name getting 3x Diagnosis'
+   width despite similar content length) and the table overflowing its
+   own panel outright, since auto-layout treats width:100% as a minimum,
+   not a cap. Fixed layout makes the percentages below authoritative and
+   guarantees the table (and every cell's content) stays within the
+   panel — the actual goal here — with long values wrapping inside their
+   column instead of forcing overflow or horizontal scroll. Percentages
+   sum to 100 and were sized against this panel's real ~1160px content
+   width: short/fixed-shape columns get just enough room to stay on one
+   line at realistic content lengths (verified below), and the rest goes
+   to Name/Diagnosis/Consultant in roughly equal shares. Scoped to
+   .patients-table only — PatientHistoryScreen's differently-shaped
+   7-column table (no Status/Actions) is untouched. */
+.patients-table { table-layout: fixed; }
+.patients-table th.col-opd { width: 11%; }
+.patients-table th.col-xs { width: 5%; }
+.patients-table th.col-date { width: 8%; }
+.patients-table th.col-status { width: 7%; }
+.patients-table th.actions-cell { width: 14%; }
+
+/* vertical-align:middle (only on the td, not the th) keeps the action
+   buttons centered against sibling cells that wrap to multiple lines
+   (long names/diagnoses/consultants) — every other column in this table
+   stays top-aligned, unchanged. white-space:nowrap keeps Print/Edit on
+   one line regardless of the fixed column width rounding. */
+.patients-table td.actions-cell { vertical-align: middle; white-space: nowrap; }
+.status-badge {
+  display: inline-block; font-size: 11.5px; font-weight: 600; padding: 2px 8px;
+  border-radius: 10px; text-transform: uppercase; letter-spacing: .02em;
+}
+.status-badge.active { background: var(--hg-100); color: var(--hg-700); }
+.status-badge.inactive { background: #f1eeee; color: var(--muted); }
 
 /* ---- OPD print slip (A4) — isolated from on-screen styles ---- */
 .print-slip { display: none; }

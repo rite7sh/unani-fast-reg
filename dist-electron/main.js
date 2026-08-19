@@ -1,7 +1,8 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'url';
-import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, previewNextOpdNumber, createBackup, ensureTodayBackup, getBackupStatus, } from './database.cjs';
+import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, previewNextOpdNumber, createBackup, ensureTodayBackup, getBackupStatus, hasAdminPassword, setAdminPassword, verifyAdminPassword, changeAdminPassword, listDiagnosesAdmin, addDiagnosis, updateDiagnosisName, setDiagnosisActive, listConsultantsAdmin, addConsultant, updateConsultantName, setConsultantActive, getAdminAnalytics, getPatientAdmin, restorePatient, exportPatientsCsv, listBackups, } from './database.cjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 async function findAvailableDevServer() {
@@ -140,9 +141,9 @@ ipcMain.handle('db:checkDuplicate', (event, patientName, ageYears) => {
         throw error;
     }
 });
-ipcMain.handle('db:searchPatients', (event, query, registrationDate) => {
+ipcMain.handle('db:searchPatients', (event, query, registrationDate, includeDeleted) => {
     try {
-        return searchPatients(query, registrationDate);
+        return searchPatients(query, registrationDate, includeDeleted);
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -238,6 +239,205 @@ ipcMain.handle('db:getBackupStatus', () => {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('[IPC] db:getBackupStatus failed:', message);
+        throw error;
+    }
+});
+// ============================================
+// IPC Handlers for Admin Operations
+// ============================================
+ipcMain.handle('admin:hasPassword', () => {
+    try {
+        return hasAdminPassword();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:hasPassword failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:setPassword', (event, password) => {
+    try {
+        setAdminPassword(password);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:setPassword failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:login', (event, password) => {
+    try {
+        return { success: verifyAdminPassword(password) };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:login failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:changePassword', (event, currentPassword, newPassword) => {
+    try {
+        return { success: changeAdminPassword(currentPassword, newPassword) };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:changePassword failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:listDiagnoses', () => {
+    try {
+        return listDiagnosesAdmin();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:listDiagnoses failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:addDiagnosis', (event, name) => {
+    try {
+        return addDiagnosis(name);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:addDiagnosis failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:updateDiagnosis', (event, id, name) => {
+    try {
+        updateDiagnosisName(id, name);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:updateDiagnosis failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:setDiagnosisActive', (event, id, active) => {
+    try {
+        setDiagnosisActive(id, active);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:setDiagnosisActive failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:listConsultants', () => {
+    try {
+        return listConsultantsAdmin();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:listConsultants failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:addConsultant', (event, name) => {
+    try {
+        return addConsultant(name);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:addConsultant failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:updateConsultant', (event, id, name) => {
+    try {
+        updateConsultantName(id, name);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:updateConsultant failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:setConsultantActive', (event, id, active) => {
+    try {
+        setConsultantActive(id, active);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:setConsultantActive failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:getAnalytics', () => {
+    try {
+        return getAdminAnalytics();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:getAnalytics failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:getPatient', (event, id) => {
+    try {
+        return getPatientAdmin(id);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:getPatient failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:restorePatient', (event, id) => {
+    try {
+        restorePatient(id);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:restorePatient failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:exportCsv', async (event, filters) => {
+    try {
+        const csv = exportPatientsCsv(filters);
+        const result = await dialog.showSaveDialog({
+            title: 'Export Patients CSV',
+            defaultPath: `opd-export-${new Date().toISOString().slice(0, 10)}.csv`,
+            filters: [{ name: 'CSV', extensions: ['csv'] }],
+        });
+        if (result.canceled || !result.filePath) {
+            return { success: false, canceled: true };
+        }
+        fs.writeFileSync(result.filePath, csv, 'utf-8');
+        return { success: true, filePath: result.filePath };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:exportCsv failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:createBackupNow', async () => {
+    try {
+        return await createBackup();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:createBackupNow failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:listBackups', () => {
+    try {
+        return listBackups();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:listBackups failed:', message);
         throw error;
     }
 });
