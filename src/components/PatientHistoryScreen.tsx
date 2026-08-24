@@ -129,7 +129,7 @@ export default function PatientHistoryScreen({
           <form className="search-bar" onSubmit={submitSearch}>
             <div className="search-field">
               <label className="lbl" htmlFor="hist-query">
-                Search by Patient Name or OPD No.
+                Search by Patient Name or C.R. No.
               </label>
               <input
                 id="hist-query"
@@ -171,7 +171,7 @@ export default function PatientHistoryScreen({
             <table className="hist-table">
               <thead>
                 <tr>
-                  <th>OPD No.</th>
+                  <th>C.R. No.</th>
                   <th>Patient Name</th>
                   <th>Age</th>
                   <th>Gender</th>
@@ -204,7 +204,7 @@ export default function PatientHistoryScreen({
         {selected && (
           <section className="panel detail-panel">
             <h2 className="panel-title">
-              <span className="opd-label">OPD No.</span>
+              <span className="opd-label">C.R. No.</span>
               <span className="opd-chip">{selected.opd_no}</span>
               {" — "}
               {selected.patient_name}
@@ -226,6 +226,14 @@ export default function PatientHistoryScreen({
               <div className="detail-row span2">
                 <span className="lbl">Address</span>
                 <div className="detail-value">{selected.address}</div>
+              </div>
+              <div className="detail-row">
+                <span className="lbl">Aadhaar Number</span>
+                <div className="detail-value">{selected.aadhaar_number || "—"}</div>
+              </div>
+              <div className="detail-row">
+                <span className="lbl">Mobile Number</span>
+                <div className="detail-value">{selected.mobile_number || "—"}</div>
               </div>
               <div className="detail-row">
                 <span className="lbl">Diagnosis</span>

@@ -7,8 +7,11 @@ export interface PatientData {
     age_months: number;
     gender: string;
     address: string;
+    aadhaar_number?: string;
+    mobile_number?: string;
     diagnosis: string;
     diagnosis_other?: string;
+    department?: string;
     consultant: string;
     employee_id: string;
     created_at?: string;

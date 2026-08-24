@@ -22,8 +22,11 @@ type EditForm = {
   gender: string;
   registration_date_iso: string;
   address: string;
+  aadhaar_number: string;
+  mobile_number: string;
   diagnosis: string;
   diagnosis_other: string;
+  department: string;
   consultant: string;
 };
 
@@ -35,8 +38,11 @@ function toEditForm(p: PatientData): EditForm {
     gender: p.gender,
     registration_date_iso: registrationDateToIso(p.registration_date),
     address: p.address,
+    aadhaar_number: p.aadhaar_number || "",
+    mobile_number: p.mobile_number || "",
     diagnosis: p.diagnosis,
     diagnosis_other: p.diagnosis_other || "",
+    department: p.department || "",
     consultant: p.consultant,
   };
 }
@@ -88,6 +94,50 @@ export default function AdminPatientsScreen({
     window.electron.db.getConsultants().then(setConsultantOptions).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Same Diagnosis → Department → Consultant chain as Registration, driven
+  // off the edit form's current diagnosis/department rather than a
+  // standalone field — see RegistrationScreen.tsx for the identical logic
+  // and reasoning (kept as a separate copy, not shared, matching how this
+  // screen already re-implements its own diagnosis/consultant fallback
+  // handling rather than importing Registration's).
+  const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
+  const [departmentConsultantOptions, setDepartmentConsultantOptions] = useState<string[]>([]);
+  const hasDepartmentChain = departmentOptions.length > 0;
+
+  useEffect(() => {
+    if (!editForm || !editForm.diagnosis) {
+      setDepartmentOptions([]);
+      return;
+    }
+    let cancelled = false;
+    window.electron.db
+      .getDepartmentsForDiagnosis(editForm.diagnosis)
+      .then((list) => {
+        if (!cancelled) setDepartmentOptions(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [editForm?.diagnosis]);
+
+  useEffect(() => {
+    if (!editForm || !hasDepartmentChain || !editForm.department) {
+      setDepartmentConsultantOptions([]);
+      return;
+    }
+    let cancelled = false;
+    window.electron.db
+      .getConsultantsForDepartment(editForm.department)
+      .then((list) => {
+        if (!cancelled) setDepartmentConsultantOptions(list);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [editForm?.department, hasDepartmentChain]);
 
   // Accepts explicit overrides rather than always reading state — callers
   // that change state and then immediately (via setTimeout) re-run the
@@ -197,6 +247,13 @@ export default function AdminPatientsScreen({
         address: editForm.address.trim(),
         diagnosis: editForm.diagnosis,
         consultant: editForm.consultant,
+        // Always sent as a plain string (never omitted/undefined) so that
+        // clearing the field in the form actually persists as cleared,
+        // rather than silently leaving the previous value untouched —
+        // updatePatient() only writes fields present in this object.
+        aadhaar_number: editForm.aadhaar_number.trim(),
+        mobile_number: editForm.mobile_number.trim(),
+        department: hasDepartmentChain ? editForm.department : "",
         ...(editForm.diagnosis === "Other" ? { diagnosis_other: editForm.diagnosis_other.trim() } : {}),
       });
       setSelected(updated);
@@ -239,17 +296,26 @@ export default function AdminPatientsScreen({
     restore(id);
   }
 
-  // Keep the record's current diagnosis/consultant selectable even if it
-  // was since deactivated in master data — otherwise opening the edit form
-  // would silently force a change just by rendering a <select>.
+  // Keep the record's current diagnosis/department/consultant selectable
+  // even if it was since deactivated or unmapped in master data —
+  // otherwise opening the edit form would silently force a change just by
+  // rendering a <select>. Same reasoning as before this feature existed,
+  // now extended to Department and to the department-scoped consultant
+  // list (falling back to the flat list when this diagnosis has no
+  // department chain, matching Registration's effectiveConsultantOptions).
   const diagnosisSelectOptions =
     editForm && !diagnosisOptions.includes(editForm.diagnosis) && editForm.diagnosis !== "Other"
       ? [...diagnosisOptions, editForm.diagnosis]
       : diagnosisOptions;
+  const departmentSelectOptions =
+    editForm && editForm.department && !departmentOptions.includes(editForm.department)
+      ? [...departmentOptions, editForm.department]
+      : departmentOptions;
+  const effectiveConsultantOptions = hasDepartmentChain ? departmentConsultantOptions : consultantOptions;
   const consultantSelectOptions =
-    editForm && !consultantOptions.includes(editForm.consultant)
-      ? [...consultantOptions, editForm.consultant]
-      : consultantOptions;
+    editForm && !effectiveConsultantOptions.includes(editForm.consultant)
+      ? [...effectiveConsultantOptions, editForm.consultant]
+      : effectiveConsultantOptions;
 
   return (
     <>
@@ -318,7 +384,7 @@ export default function AdminPatientsScreen({
           <table className="hist-table patients-table">
             <thead>
               <tr>
-                <th className="col-opd">OPD No.</th>
+                <th className="col-opd">C.R. No.</th>
                 <th>Patient Name</th>
                 <th className="col-xs">Age</th>
                 <th className="col-xs">Gender</th>
@@ -374,7 +440,7 @@ export default function AdminPatientsScreen({
       {selected && (
         <section className="panel panel-wide detail-panel">
           <h2 className="panel-title">
-            <span className="opd-label">OPD No.</span>
+            <span className="opd-label">C.R. No.</span>
             <span className="opd-chip">{selected.opd_no}</span>
             {" — "}
             {selected.patient_name}
@@ -401,10 +467,22 @@ export default function AdminPatientsScreen({
                   <div className="detail-value">{selected.address}</div>
                 </div>
                 <div className="detail-row">
+                  <span className="lbl">Aadhaar Number</span>
+                  <div className="detail-value">{selected.aadhaar_number || "—"}</div>
+                </div>
+                <div className="detail-row">
+                  <span className="lbl">Mobile Number</span>
+                  <div className="detail-value">{selected.mobile_number || "—"}</div>
+                </div>
+                <div className="detail-row">
                   <span className="lbl">Diagnosis</span>
                   <div className="detail-value">
                     {selected.diagnosis === "Other" ? selected.diagnosis_other : selected.diagnosis}
                   </div>
+                </div>
+                <div className="detail-row">
+                  <span className="lbl">Department</span>
+                  <div className="detail-value">{selected.department || "—"}</div>
                 </div>
                 <div className="detail-row">
                   <span className="lbl">Consultant</span>
@@ -453,7 +531,7 @@ export default function AdminPatientsScreen({
                     />
                   </div>
                   <div className="radios" style={{ marginTop: 20 }}>
-                    {["Male", "Female", "Other"].map((g) => (
+                    {["Male", "Female", "Child", "Other"].map((g) => (
                       <label className="radio" key={g}>
                         <input
                           type="radio"
@@ -505,11 +583,31 @@ export default function AdminPatientsScreen({
                     />
                   </div>
                   <div>
+                    <label className="lbl">Aadhaar Number</label>
+                    <input
+                      className="inp"
+                      inputMode="numeric"
+                      value={editForm.aadhaar_number}
+                      onChange={(e) => setEditForm({ ...editForm, aadhaar_number: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="lbl">Mobile Number</label>
+                    <input
+                      className="inp"
+                      inputMode="numeric"
+                      value={editForm.mobile_number}
+                      onChange={(e) => setEditForm({ ...editForm, mobile_number: e.target.value })}
+                    />
+                  </div>
+                  <div>
                     <label className="lbl">Diagnosis</label>
                     <select
                       className="inp"
                       value={editForm.diagnosis}
-                      onChange={(e) => setEditForm({ ...editForm, diagnosis: e.target.value })}
+                      onChange={(e) =>
+                        setEditForm({ ...editForm, diagnosis: e.target.value, department: "", consultant: "" })
+                      }
                     >
                       {diagnosisSelectOptions.map((d) => (
                         <option key={d} value={d}>
@@ -529,12 +627,34 @@ export default function AdminPatientsScreen({
                     )}
                   </div>
                   <div>
+                    <label className="lbl">Department {hasDepartmentChain && <span className="req">*</span>}</label>
+                    <select
+                      className="inp"
+                      value={editForm.department}
+                      disabled={!hasDepartmentChain}
+                      onChange={(e) => setEditForm({ ...editForm, department: e.target.value, consultant: "" })}
+                    >
+                      <option value="">
+                        {hasDepartmentChain ? "Select department" : "No departments configured for this diagnosis"}
+                      </option>
+                      {departmentSelectOptions.map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
                     <label className="lbl">Consultant</label>
                     <select
                       className="inp"
                       value={editForm.consultant}
+                      disabled={hasDepartmentChain && !editForm.department}
                       onChange={(e) => setEditForm({ ...editForm, consultant: e.target.value })}
                     >
+                      <option value="">
+                        {hasDepartmentChain && !editForm.department ? "Select department first" : "Select consultant"}
+                      </option>
                       {consultantSelectOptions.map((c) => (
                         <option key={c} value={c}>
                           {c}

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import AdminDashboardScreen from "./AdminDashboardScreen";
 import AdminDiagnosesScreen from "./AdminDiagnosesScreen";
+import AdminDepartmentsScreen from "./AdminDepartmentsScreen";
 import AdminConsultantsScreen from "./AdminConsultantsScreen";
 import AdminPatientsScreen from "./AdminPatientsScreen";
 import AdminReportsScreen from "./AdminReportsScreen";
@@ -8,11 +9,20 @@ import AdminBackupScreen from "./AdminBackupScreen";
 import AdminSettingsScreen from "./AdminSettingsScreen";
 import PrintSlip from "./PrintSlip";
 
-export type AdminScreen = "dashboard" | "diagnoses" | "consultants" | "patients" | "reports" | "backup" | "settings";
+export type AdminScreen =
+  | "dashboard"
+  | "diagnoses"
+  | "departments"
+  | "consultants"
+  | "patients"
+  | "reports"
+  | "backup"
+  | "settings";
 
 const NAV_ITEMS: { key: AdminScreen; label: string }[] = [
   { key: "dashboard", label: "Dashboard" },
   { key: "diagnoses", label: "Diagnoses" },
+  { key: "departments", label: "Departments" },
   { key: "consultants", label: "Consultants" },
   { key: "patients", label: "Patients" },
   { key: "reports", label: "Reports" },
@@ -66,6 +76,7 @@ export default function AdminApp({ onLogout }: { onLogout: () => void }) {
       <main className="page">
         {screen === "dashboard" && <AdminDashboardScreen onNavigate={setScreen} />}
         {screen === "diagnoses" && <AdminDiagnosesScreen />}
+        {screen === "departments" && <AdminDepartmentsScreen />}
         {screen === "consultants" && <AdminConsultantsScreen />}
         {screen === "patients" && <AdminPatientsScreen onPatientChange={setPrintPatient} />}
         {screen === "reports" && <AdminReportsScreen />}

@@ -10,8 +10,11 @@ declare global {
     age_months: number;
     gender: string;
     address: string;
+    aadhaar_number?: string;
+    mobile_number?: string;
     diagnosis: string;
     diagnosis_other?: string;
+    department?: string;
     consultant: string;
     employee_id: string;
     created_at?: string;
@@ -104,6 +107,14 @@ declare global {
     addConsultant: (name: string) => Promise<MasterDataItem>;
     updateConsultant: (id: number, name: string) => Promise<{ success: boolean }>;
     setConsultantActive: (id: number, active: boolean) => Promise<{ success: boolean }>;
+    listDepartments: () => Promise<MasterDataItem[]>;
+    addDepartment: (name: string) => Promise<MasterDataItem>;
+    updateDepartment: (id: number, name: string) => Promise<{ success: boolean }>;
+    setDepartmentActive: (id: number, active: boolean) => Promise<{ success: boolean }>;
+    getDiagnosisDepartments: (diagnosisId: number) => Promise<number[]>;
+    setDiagnosisDepartments: (diagnosisId: number, departmentIds: number[]) => Promise<{ success: boolean }>;
+    getDepartmentConsultants: (departmentId: number) => Promise<number[]>;
+    setDepartmentConsultants: (departmentId: number, consultantIds: number[]) => Promise<{ success: boolean }>;
     getAnalytics: () => Promise<AdminAnalytics>;
     getPatient: (id: number) => Promise<PatientData | null>;
     restorePatient: (id: number) => Promise<{ success: boolean }>;
@@ -121,6 +132,8 @@ declare global {
     softDeletePatient: (id: number) => Promise<{ success: boolean }>;
     getDiagnoses: () => Promise<string[]>;
     getConsultants: () => Promise<string[]>;
+    getDepartmentsForDiagnosis: (diagnosisName: string) => Promise<string[]>;
+    getConsultantsForDepartment: (departmentName: string) => Promise<string[]>;
     getReturningPatientAddress: (patientName: string) => Promise<string | null>;
     getDashboardStats: () => Promise<DashboardStats>;
     previewNextOpdNumber: () => Promise<string>;

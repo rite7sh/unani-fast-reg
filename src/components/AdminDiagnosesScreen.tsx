@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { Fragment, useEffect, useState, type FormEvent } from "react";
 
 export default function AdminDiagnosesScreen() {
   const [items, setItems] = useState<MasterDataItem[]>([]);
@@ -10,6 +10,15 @@ export default function AdminDiagnosesScreen() {
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
+
+  // Department mapping — which departments a diagnosis routes to. Loaded
+  // once (the full department list, including inactive, so Admin can see
+  // what's currently assigned even if a department was since deactivated);
+  // per-diagnosis membership is fetched lazily on expand.
+  const [departments, setDepartments] = useState<MasterDataItem[]>([]);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedDepartmentIds, setExpandedDepartmentIds] = useState<number[]>([]);
+  const [savingMapping, setSavingMapping] = useState(false);
 
   function load() {
     setLoading(true);
@@ -25,6 +34,45 @@ export default function AdminDiagnosesScreen() {
   }
 
   useEffect(load, []);
+  useEffect(() => {
+    window.electron.admin.listDepartments().then(setDepartments).catch(() => undefined);
+  }, []);
+
+  async function toggleExpand(item: MasterDataItem) {
+    if (expandedId === item.id) {
+      setExpandedId(null);
+      return;
+    }
+    setError(null);
+    try {
+      const ids = await window.electron.admin.getDiagnosisDepartments(item.id);
+      setExpandedDepartmentIds(ids);
+      setExpandedId(item.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Could not load department mapping: ${message}`);
+    }
+  }
+
+  function toggleDepartmentChecked(departmentId: number) {
+    setExpandedDepartmentIds((prev) =>
+      prev.includes(departmentId) ? prev.filter((id) => id !== departmentId) : [...prev, departmentId]
+    );
+  }
+
+  async function saveMapping(diagnosisId: number) {
+    setSavingMapping(true);
+    setError(null);
+    try {
+      await window.electron.admin.setDiagnosisDepartments(diagnosisId, expandedDepartmentIds);
+      setExpandedId(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(`Could not save department mapping: ${message}`);
+    } finally {
+      setSavingMapping(false);
+    }
+  }
 
   async function submitAdd(e: FormEvent) {
     e.preventDefault();
@@ -106,48 +154,102 @@ export default function AdminDiagnosesScreen() {
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={item.id}>
-                <td>
-                  {editingId === item.id ? (
-                    <input
-                      className="inp"
-                      value={editName}
-                      onChange={(e) => setEditName(e.target.value)}
-                      autoFocus
-                    />
-                  ) : (
-                    item.name
-                  )}
-                </td>
-                <td>
-                  <span className={item.active ? "status-badge active" : "status-badge inactive"}>
-                    {item.active ? "Active" : "Inactive"}
-                  </span>
-                </td>
-                <td>
-                  <div className="table-actions">
+              <Fragment key={item.id}>
+                <tr>
+                  <td>
                     {editingId === item.id ? (
-                      <>
-                        <button className="btn-secondary sm" onClick={() => saveEdit(item.id)}>
-                          Save
-                        </button>
-                        <button className="btn-ghost" onClick={() => setEditingId(null)}>
-                          Cancel
-                        </button>
-                      </>
+                      <input
+                        className="inp"
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        autoFocus
+                      />
                     ) : (
-                      <>
-                        <button className="btn-secondary sm" onClick={() => startEdit(item)}>
-                          Rename
-                        </button>
-                        <button className="btn-ghost" onClick={() => toggleActive(item)}>
-                          {item.active ? "Deactivate" : "Activate"}
-                        </button>
-                      </>
+                      item.name
                     )}
-                  </div>
-                </td>
-              </tr>
+                  </td>
+                  <td>
+                    <span className={item.active ? "status-badge active" : "status-badge inactive"}>
+                      {item.active ? "Active" : "Inactive"}
+                    </span>
+                  </td>
+                  <td>
+                    <div className="table-actions">
+                      {editingId === item.id ? (
+                        <>
+                          <button className="btn-secondary sm" onClick={() => saveEdit(item.id)}>
+                            Save
+                          </button>
+                          <button className="btn-ghost" onClick={() => setEditingId(null)}>
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn-secondary sm" onClick={() => startEdit(item)}>
+                            Rename
+                          </button>
+                          <button className="btn-ghost" onClick={() => toggleActive(item)}>
+                            {item.active ? "Deactivate" : "Activate"}
+                          </button>
+                          <button className="btn-ghost" onClick={() => toggleExpand(item)}>
+                            {expandedId === item.id ? "Hide Departments" : "Departments"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+                {expandedId === item.id && (
+                  <tr>
+                    <td colSpan={3}>
+                      <div className="mapping-panel">
+                        <p className="hint">
+                          Departments this diagnosis routes to in Registration. Leave none checked if this diagnosis
+                          doesn't need the Department step.
+                        </p>
+                        {departments.length === 0 ? (
+                          <p className="empty-note">No departments exist yet — add one on the Departments screen.</p>
+                        ) : (
+                          <div className="checklist">
+                            {departments.map((d) => (
+                              <label className="radio" key={d.id}>
+                                <input
+                                  type="checkbox"
+                                  checked={expandedDepartmentIds.includes(d.id)}
+                                  onChange={() => toggleDepartmentChecked(d.id)}
+                                />
+                                {d.name}
+                                {!d.active && (
+                                  <span className="status-badge inactive" style={{ marginLeft: 6 }}>
+                                    Inactive
+                                  </span>
+                                )}
+                              </label>
+                            ))}
+                          </div>
+                        )}
+                        <div className="actions bar">
+                          <button
+                            className="btn-secondary sm"
+                            onClick={() => setExpandedId(null)}
+                            disabled={savingMapping}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            className="btn-primary sm"
+                            onClick={() => saveMapping(item.id)}
+                            disabled={savingMapping}
+                          >
+                            {savingMapping ? "Saving..." : "Save Mapping"}
+                          </button>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>

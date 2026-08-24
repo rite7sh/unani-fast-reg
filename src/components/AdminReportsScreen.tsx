@@ -83,6 +83,7 @@ export default function AdminReportsScreen() {
               <option value="">Any</option>
               <option value="Male">Male</option>
               <option value="Female">Female</option>
+              <option value="Child">Child</option>
               <option value="Other">Other</option>
             </select>
           </div>

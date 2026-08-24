@@ -1,5 +1,6 @@
 {
   "name": "unani-opd",
+  "version": "1.0.0",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -13,16 +14,11 @@
     "build:electron": "tsc -p electron/tsconfig.json && tsc -p electron/preload.tsconfig.json && tsc -p electron/database.tsconfig.json && node --input-type=module -e \"import fs from 'fs'; fs.renameSync('dist-electron/preload.js', 'dist-electron/preload.cjs'); fs.renameSync('dist-electron/database.js', 'dist-electron/database.cjs');\"",
     "preview": "vite preview",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "dist:win": "electron-builder --win"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.2.1",
-    "better-sqlite3": "12.11.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "sql.js": "^1.14.1",
-    "tailwindcss": "^4.2.1",
-    "tw-animate-css": "^1.3.4"
+    "better-sqlite3": "12.11.1"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
@@ -34,6 +30,7 @@
     "@vitejs/plugin-react": "^5.2.0",
     "concurrently": "^9.1.0",
     "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
     "eslint": "^9.32.0",
     "eslint-config-prettier": "^10.1.1",
     "eslint-plugin-prettier": "^5.2.6",
@@ -41,6 +38,8 @@
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^15.15.0",
     "prettier": "^3.7.3",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.2.0",
@@ -49,5 +48,33 @@
   "allowScripts": {
     "electron@33.4.11": true,
     "better-sqlite3@12.11.1": true
+  },
+  "build": {
+    "appId": "com.unanihospital.opd",
+    "productName": "Unani Hospital OPD Management System",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*.js",
+      "dist-electron/**/*.cjs",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/better-sqlite3/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/favicon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Unani Hospital OPD"
+    }
   }
 }

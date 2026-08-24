@@ -10,8 +10,11 @@ export interface PatientData {
   age_months: number;
   gender: string;
   address: string;
+  aadhaar_number?: string;
+  mobile_number?: string;
   diagnosis: string;
   diagnosis_other?: string;
+  department?: string;
   consultant: string;
   employee_id: string;
   created_at?: string;
@@ -131,6 +134,12 @@ contextBridge.exposeInMainWorld('electron', {
     getConsultants: async () => {
       return ipcRenderer.invoke('db:getConsultants');
     },
+    getDepartmentsForDiagnosis: async (diagnosisName: string) => {
+      return ipcRenderer.invoke('db:getDepartmentsForDiagnosis', diagnosisName);
+    },
+    getConsultantsForDepartment: async (departmentName: string) => {
+      return ipcRenderer.invoke('db:getConsultantsForDepartment', departmentName);
+    },
     getReturningPatientAddress: async (patientName: string) => {
       return ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
     },
@@ -187,6 +196,30 @@ contextBridge.exposeInMainWorld('electron', {
     },
     setConsultantActive: async (id: number, active: boolean): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('admin:setConsultantActive', id, active);
+    },
+    listDepartments: async (): Promise<MasterDataItem[]> => {
+      return ipcRenderer.invoke('admin:listDepartments');
+    },
+    addDepartment: async (name: string): Promise<MasterDataItem> => {
+      return ipcRenderer.invoke('admin:addDepartment', name);
+    },
+    updateDepartment: async (id: number, name: string): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:updateDepartment', id, name);
+    },
+    setDepartmentActive: async (id: number, active: boolean): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:setDepartmentActive', id, active);
+    },
+    getDiagnosisDepartments: async (diagnosisId: number): Promise<number[]> => {
+      return ipcRenderer.invoke('admin:getDiagnosisDepartments', diagnosisId);
+    },
+    setDiagnosisDepartments: async (diagnosisId: number, departmentIds: number[]): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:setDiagnosisDepartments', diagnosisId, departmentIds);
+    },
+    getDepartmentConsultants: async (departmentId: number): Promise<number[]> => {
+      return ipcRenderer.invoke('admin:getDepartmentConsultants', departmentId);
+    },
+    setDepartmentConsultants: async (departmentId: number, consultantIds: number[]): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:setDepartmentConsultants', departmentId, consultantIds);
     },
     getAnalytics: async (): Promise<AdminAnalytics> => {
       return ipcRenderer.invoke('admin:getAnalytics');

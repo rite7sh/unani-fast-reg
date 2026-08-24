@@ -39,6 +39,12 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         getConsultants: async () => {
             return electron_1.ipcRenderer.invoke('db:getConsultants');
         },
+        getDepartmentsForDiagnosis: async (diagnosisName) => {
+            return electron_1.ipcRenderer.invoke('db:getDepartmentsForDiagnosis', diagnosisName);
+        },
+        getConsultantsForDepartment: async (departmentName) => {
+            return electron_1.ipcRenderer.invoke('db:getConsultantsForDepartment', departmentName);
+        },
         getReturningPatientAddress: async (patientName) => {
             return electron_1.ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
         },
@@ -94,6 +100,30 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         },
         setConsultantActive: async (id, active) => {
             return electron_1.ipcRenderer.invoke('admin:setConsultantActive', id, active);
+        },
+        listDepartments: async () => {
+            return electron_1.ipcRenderer.invoke('admin:listDepartments');
+        },
+        addDepartment: async (name) => {
+            return electron_1.ipcRenderer.invoke('admin:addDepartment', name);
+        },
+        updateDepartment: async (id, name) => {
+            return electron_1.ipcRenderer.invoke('admin:updateDepartment', id, name);
+        },
+        setDepartmentActive: async (id, active) => {
+            return electron_1.ipcRenderer.invoke('admin:setDepartmentActive', id, active);
+        },
+        getDiagnosisDepartments: async (diagnosisId) => {
+            return electron_1.ipcRenderer.invoke('admin:getDiagnosisDepartments', diagnosisId);
+        },
+        setDiagnosisDepartments: async (diagnosisId, departmentIds) => {
+            return electron_1.ipcRenderer.invoke('admin:setDiagnosisDepartments', diagnosisId, departmentIds);
+        },
+        getDepartmentConsultants: async (departmentId) => {
+            return electron_1.ipcRenderer.invoke('admin:getDepartmentConsultants', departmentId);
+        },
+        setDepartmentConsultants: async (departmentId, consultantIds) => {
+            return electron_1.ipcRenderer.invoke('admin:setDepartmentConsultants', departmentId, consultantIds);
         },
         getAnalytics: async () => {
             return electron_1.ipcRenderer.invoke('admin:getAnalytics');

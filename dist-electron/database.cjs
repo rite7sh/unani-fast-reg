@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.setConsultantActive = exports.updateConsultantName = exports.addConsultant = exports.listConsultantsAdmin = exports.setDiagnosisActive = exports.updateDiagnosisName = exports.addDiagnosis = exports.listDiagnosesAdmin = void 0;
+exports.setDepartmentActive = exports.updateDepartmentName = exports.addDepartment = exports.listDepartmentsAdmin = exports.setConsultantActive = exports.updateConsultantName = exports.addConsultant = exports.listConsultantsAdmin = exports.setDiagnosisActive = exports.updateDiagnosisName = exports.addDiagnosis = exports.listDiagnosesAdmin = void 0;
 exports.initializeDatabase = initializeDatabase;
 exports.closeDatabase = closeDatabase;
 exports.previewNextOpdNumber = previewNextOpdNumber;
@@ -17,6 +17,12 @@ exports.updatePatient = updatePatient;
 exports.softDeletePatient = softDeletePatient;
 exports.getDiagnoses = getDiagnoses;
 exports.getConsultants = getConsultants;
+exports.getDepartmentsForDiagnosis = getDepartmentsForDiagnosis;
+exports.getConsultantsForDepartment = getConsultantsForDepartment;
+exports.getDiagnosisDepartmentIds = getDiagnosisDepartmentIds;
+exports.setDiagnosisDepartments = setDiagnosisDepartments;
+exports.getDepartmentConsultantIds = getDepartmentConsultantIds;
+exports.setDepartmentConsultants = setDepartmentConsultants;
 exports.hasAdminPassword = hasAdminPassword;
 exports.setAdminPassword = setAdminPassword;
 exports.verifyAdminPassword = verifyAdminPassword;
@@ -46,6 +52,16 @@ function getDatabasePath() {
         node_fs_1.default.mkdirSync(dataDir, { recursive: true });
     }
     return path_1.default.join(dataDir, 'opd.db');
+}
+// Adds `column` to `table` only if it doesn't already exist. SQLite has no
+// `ADD COLUMN IF NOT EXISTS`, so this is the guard that makes an
+// `ALTER TABLE` safe to run on every startup against a database that may
+// already have the column from a prior run.
+function addColumnIfMissing(table, column, type) {
+    const existing = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!existing.some((c) => c.name === column)) {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    }
 }
 function initializeDatabase() {
     if (isInitialized && db) {
@@ -109,8 +125,42 @@ function initializeDatabase() {
 
       CREATE INDEX IF NOT EXISTS idx_diagnoses_active ON diagnoses(active);
       CREATE INDEX IF NOT EXISTS idx_consultants_active ON consultants(active);
+
+      CREATE TABLE IF NOT EXISTS departments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        active INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_departments_active ON departments(active);
+
+      CREATE TABLE IF NOT EXISTS diagnosis_departments (
+        diagnosis_id INTEGER NOT NULL REFERENCES diagnoses(id),
+        department_id INTEGER NOT NULL REFERENCES departments(id),
+        PRIMARY KEY (diagnosis_id, department_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS department_consultants (
+        department_id INTEGER NOT NULL REFERENCES departments(id),
+        consultant_id INTEGER NOT NULL REFERENCES consultants(id),
+        PRIMARY KEY (department_id, consultant_id)
+      );
     `);
+        // patients pre-dates department/aadhaar_number/mobile_number — unlike
+        // every other table here, it can already have rows on an existing
+        // install, and SQLite's ADD COLUMN isn't idempotent (re-running it on a
+        // column that already exists throws "duplicate column name"), so each
+        // one is guarded by an existence check rather than relying on
+        // CREATE TABLE IF NOT EXISTS the way everything else in this function
+        // does. Every new column is nullable — existing rows get NULL
+        // automatically, nothing is backfilled or guessed.
+        addColumnIfMissing('patients', 'department', 'TEXT');
+        addColumnIfMissing('patients', 'aadhaar_number', 'TEXT');
+        addColumnIfMissing('patients', 'mobile_number', 'TEXT');
         seedMasterData();
+        seedPlaceholderDepartmentMappings();
         isInitialized = true;
         console.log('[Database] Initialization complete');
     }
@@ -166,11 +216,12 @@ function registerPatient(patient) {
     const stmt = db.prepare(`
     INSERT INTO patients (
       opd_no, registration_date, patient_name, age_years, age_months,
-      gender, address, diagnosis, diagnosis_other, consultant,
+      gender, address, aadhaar_number, mobile_number, diagnosis,
+      diagnosis_other, department, consultant,
       employee_id, created_at, updated_at, is_deleted, synced
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
   `);
-    const result = stmt.run(opdNo, patient.registration_date, patient.patient_name, patient.age_years, patient.age_months, patient.gender, patient.address, patient.diagnosis, patient.diagnosis_other || null, patient.consultant, patient.employee_id, now, now);
+    const result = stmt.run(opdNo, patient.registration_date, patient.patient_name, patient.age_years, patient.age_months, patient.gender, patient.address, patient.aadhaar_number || null, patient.mobile_number || null, patient.diagnosis, patient.diagnosis_other || null, patient.department || null, patient.consultant, patient.employee_id, now, now);
     return {
         id: result.lastInsertRowid,
         opd_no: opdNo,
@@ -280,8 +331,11 @@ function updatePatient(id, updates) {
         'gender',
         'registration_date',
         'address',
+        'aadhaar_number',
+        'mobile_number',
         'diagnosis',
         'diagnosis_other',
+        'department',
         'consultant',
     ];
     for (const field of allowedFields) {
@@ -409,6 +463,72 @@ function seedMasterData() {
         insertAll(SEED_CONSULTANTS);
     }
 }
+// ============================================
+// PLACEHOLDER TEST DATA — Diagnosis → Department → Consultant chain
+// ============================================
+//
+// The real hospital's department structure and diagnosis/consultant
+// mappings were not available when this feature was built (see project
+// history). These names are deliberately obvious fakes ("Diagnosis 1",
+// "Department A", "Doctor X", ...) so they can never be mistaken for real
+// data, and are added ON TOP of the existing real SEED_DIAGNOSES /
+// SEED_CONSULTANTS lists — nothing real is replaced or touched.
+//
+// To remove/replace once real data arrives: delete these rows (and their
+// mappings) via the Admin > Diagnoses / Departments / Consultants screens,
+// or directly from the diagnoses/consultants/departments/
+// diagnosis_departments/department_consultants tables — no code or schema
+// change is required either way, since this is ordinary master-data rows,
+// not anything hardcoded into the application.
+const PLACEHOLDER_DIAGNOSES = ['Diagnosis 1', 'Diagnosis 2', 'Diagnosis 3'];
+const PLACEHOLDER_DEPARTMENTS = ['Department A', 'Department B', 'Department C', 'Department X'];
+const PLACEHOLDER_CONSULTANTS = ['Doctor X', 'Doctor Y', 'Doctor Z', 'Consultant 1', 'Consultant 2'];
+const PLACEHOLDER_DIAGNOSIS_DEPARTMENTS = {
+    'Diagnosis 1': ['Department A', 'Department B'],
+    'Diagnosis 2': ['Department B', 'Department C'],
+    'Diagnosis 3': ['Department X'],
+};
+const PLACEHOLDER_DEPARTMENT_CONSULTANTS = {
+    'Department A': ['Doctor X', 'Consultant 1'],
+    'Department B': ['Doctor Y'],
+    'Department C': ['Doctor Z', 'Consultant 2'],
+    'Department X': ['Consultant 1'],
+};
+// Adds one named row to a master-data table if it isn't already there
+// (by UNIQUE name), returning its id either way. Idempotent across
+// restarts — safe to call every startup. Operates on `db` directly rather
+// than through the public addMasterDataItem()/isInitialized-guarded API:
+// this runs from initializeDatabase() itself, before isInitialized is set
+// to true, the same reason seedMasterData() also bypasses that guard.
+function ensureMasterDataRow(table, name) {
+    const existing = db.prepare(`SELECT id FROM ${table} WHERE name = ?`).get(name);
+    if (existing)
+        return existing.id;
+    const maxOrder = db.prepare(`SELECT MAX(sort_order) AS maxOrder FROM ${table}`).get()
+        .maxOrder;
+    const nextOrder = (maxOrder ?? -1) + 1;
+    const result = db.prepare(`INSERT INTO ${table} (name, active, sort_order) VALUES (?, 1, ?)`).run(name, nextOrder);
+    return result.lastInsertRowid;
+}
+function seedPlaceholderDepartmentMappings() {
+    const diagnosisIds = new Map(PLACEHOLDER_DIAGNOSES.map((name) => [name, ensureMasterDataRow('diagnoses', name)]));
+    const departmentIds = new Map(PLACEHOLDER_DEPARTMENTS.map((name) => [name, ensureMasterDataRow('departments', name)]));
+    const consultantIds = new Map(PLACEHOLDER_CONSULTANTS.map((name) => [name, ensureMasterDataRow('consultants', name)]));
+    const insertDiagDept = db.prepare('INSERT OR IGNORE INTO diagnosis_departments (diagnosis_id, department_id) VALUES (?, ?)');
+    for (const [diagnosisName, departmentNames] of Object.entries(PLACEHOLDER_DIAGNOSIS_DEPARTMENTS)) {
+        const diagnosisId = diagnosisIds.get(diagnosisName);
+        for (const departmentName of departmentNames) {
+            insertDiagDept.run(diagnosisId, departmentIds.get(departmentName));
+        }
+    }
+    const insertDeptCons = db.prepare('INSERT OR IGNORE INTO department_consultants (department_id, consultant_id) VALUES (?, ?)');
+    for (const [departmentName, consultantNames] of Object.entries(PLACEHOLDER_DEPARTMENT_CONSULTANTS)) {
+        const departmentId = departmentIds.get(departmentName);
+        for (const consultantName of consultantNames) {
+            insertDeptCons.run(departmentId, consultantIds.get(consultantName));
+        }
+    }
+}
 function getDiagnoses() {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
@@ -477,6 +597,107 @@ const updateConsultantName = (id, name) => updateMasterDataName('consultants', i
 exports.updateConsultantName = updateConsultantName;
 const setConsultantActive = (id, active) => setMasterDataActive('consultants', id, active);
 exports.setConsultantActive = setConsultantActive;
+const listDepartmentsAdmin = () => listMasterData('departments');
+exports.listDepartmentsAdmin = listDepartmentsAdmin;
+const addDepartment = (name) => addMasterDataItem('departments', name);
+exports.addDepartment = addDepartment;
+const updateDepartmentName = (id, name) => updateMasterDataName('departments', id, name);
+exports.updateDepartmentName = updateDepartmentName;
+const setDepartmentActive = (id, active) => setMasterDataActive('departments', id, active);
+exports.setDepartmentActive = setDepartmentActive;
+// ============================================
+// Admin — Diagnosis → Department → Consultant mappings
+// ============================================
+//
+// Both diagnosis and consultant stay free-text on `patients` (see Patient
+// interface) so a mapping change here can never corrupt a historical
+// record — these tables only ever influence what the Registration/Admin
+// dropdowns *offer*, the same way diagnoses/consultants already work.
+// Departments mapped to a given diagnosis, by name — used by Registration
+// and Admin's patient edit to populate the Department dropdown once a
+// Diagnosis is chosen. Active departments only, in sort_order.
+function getDepartmentsForDiagnosis(diagnosisName) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const diagnosis = db.prepare('SELECT id FROM diagnoses WHERE name = ?').get(diagnosisName);
+    if (!diagnosis)
+        return [];
+    const rows = db
+        .prepare(`SELECT d.name AS name FROM departments d
+       JOIN diagnosis_departments dd ON dd.department_id = d.id
+       WHERE dd.diagnosis_id = ? AND d.active = 1
+       ORDER BY d.sort_order`)
+        .all(diagnosis.id);
+    return rows.map((r) => r.name);
+}
+// Consultants mapped to a given department, by name — same role as
+// getDepartmentsForDiagnosis, one level down the chain.
+function getConsultantsForDepartment(departmentName) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const department = db.prepare('SELECT id FROM departments WHERE name = ?').get(departmentName);
+    if (!department)
+        return [];
+    const rows = db
+        .prepare(`SELECT c.name AS name FROM consultants c
+       JOIN department_consultants dc ON dc.consultant_id = c.id
+       WHERE dc.department_id = ? AND c.active = 1
+       ORDER BY c.sort_order`)
+        .all(department.id);
+    return rows.map((r) => r.name);
+}
+// Admin-facing: which department IDs are currently mapped to a diagnosis
+// (including inactive departments, so Admin's checklist can show them).
+function getDiagnosisDepartmentIds(diagnosisId) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const rows = db
+        .prepare('SELECT department_id FROM diagnosis_departments WHERE diagnosis_id = ?')
+        .all(diagnosisId);
+    return rows.map((r) => r.department_id);
+}
+// Replaces the full set of departments mapped to a diagnosis in one
+// transaction (delete-then-reinsert) — Admin's checklist always submits
+// the complete desired set, never an incremental add/remove.
+function setDiagnosisDepartments(diagnosisId, departmentIds) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const run = db.transaction((ids) => {
+        db.prepare('DELETE FROM diagnosis_departments WHERE diagnosis_id = ?').run(diagnosisId);
+        const insert = db.prepare('INSERT INTO diagnosis_departments (diagnosis_id, department_id) VALUES (?, ?)');
+        for (const departmentId of ids) {
+            insert.run(diagnosisId, departmentId);
+        }
+    });
+    run(departmentIds);
+}
+// Admin-facing equivalent of getDiagnosisDepartmentIds, one level down.
+function getDepartmentConsultantIds(departmentId) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const rows = db
+        .prepare('SELECT consultant_id FROM department_consultants WHERE department_id = ?')
+        .all(departmentId);
+    return rows.map((r) => r.consultant_id);
+}
+function setDepartmentConsultants(departmentId, consultantIds) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const run = db.transaction((ids) => {
+        db.prepare('DELETE FROM department_consultants WHERE department_id = ?').run(departmentId);
+        const insert = db.prepare('INSERT INTO department_consultants (department_id, consultant_id) VALUES (?, ?)');
+        for (const consultantId of ids) {
+            insert.run(departmentId, consultantId);
+        }
+    });
+    run(consultantIds);
+}
 // ============================================
 // Admin — Authentication
 // ============================================

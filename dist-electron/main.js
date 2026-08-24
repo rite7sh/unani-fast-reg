@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import path from 'path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'url';
-import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, previewNextOpdNumber, createBackup, ensureTodayBackup, getBackupStatus, hasAdminPassword, setAdminPassword, verifyAdminPassword, changeAdminPassword, listDiagnosesAdmin, addDiagnosis, updateDiagnosisName, setDiagnosisActive, listConsultantsAdmin, addConsultant, updateConsultantName, setConsultantActive, getAdminAnalytics, getPatientAdmin, restorePatient, exportPatientsCsv, listBackups, } from './database.cjs';
+import { initializeDatabase, closeDatabase, registerPatient, checkDuplicate, searchPatients, getPatient, updatePatient, softDeletePatient, getDiagnoses, getConsultants, getReturningPatientAddress, getDashboardStats, previewNextOpdNumber, createBackup, ensureTodayBackup, getBackupStatus, hasAdminPassword, setAdminPassword, verifyAdminPassword, changeAdminPassword, listDiagnosesAdmin, addDiagnosis, updateDiagnosisName, setDiagnosisActive, listConsultantsAdmin, addConsultant, updateConsultantName, setConsultantActive, listDepartmentsAdmin, addDepartment, updateDepartmentName, setDepartmentActive, getDepartmentsForDiagnosis, getConsultantsForDepartment, getDiagnosisDepartmentIds, setDiagnosisDepartments, getDepartmentConsultantIds, setDepartmentConsultants, getAdminAnalytics, getPatientAdmin, restorePatient, exportPatientsCsv, listBackups, } from './database.cjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let mainWindow = null;
 async function findAvailableDevServer() {
@@ -54,17 +54,36 @@ function createWindow() {
     mainWindow.webContents.on('console-message', (level, message, line, sourceId) => {
         console.log(`[Renderer L${line}] ${message}`);
     });
-    console.log('[Electron] Attempting to connect to dev server...');
-    getDevServerURL().then(devURL => {
-        console.log(`[Electron] Found dev server at: ${devURL}`);
-        mainWindow?.loadURL(devURL);
-    }).catch(err => {
-        console.log('[Electron] Dev server not found, loading from production build...');
+    // Packaged builds never attempt dev-server detection — a customer
+    // machine has no Vite dev server, and app.isPackaged is the reliable
+    // signal for that (unlike findAvailableDevServer(), which always
+    // resolves to a URL string even when nothing is listening, so its own
+    // failure path can never be relied on to distinguish dev from
+    // production). Development keeps its existing dev-server-first,
+    // loadFile-fallback behavior unchanged.
+    if (app.isPackaged) {
         const indexPath = path.join(__dirname, '../dist/index.html');
-        console.log(`[Electron] Loading production from: ${indexPath}`);
-        mainWindow?.loadFile(indexPath);
-    });
-    mainWindow.webContents.openDevTools();
+        console.log(`[Electron] Packaged build — loading production from: ${indexPath}`);
+        mainWindow.loadFile(indexPath);
+    }
+    else {
+        console.log('[Electron] Attempting to connect to dev server...');
+        getDevServerURL().then(devURL => {
+            console.log(`[Electron] Found dev server at: ${devURL}`);
+            mainWindow?.loadURL(devURL);
+        }).catch(err => {
+            console.log('[Electron] Dev server not found, loading from production build...');
+            const indexPath = path.join(__dirname, '../dist/index.html');
+            console.log(`[Electron] Loading production from: ${indexPath}`);
+            mainWindow?.loadFile(indexPath);
+        });
+    }
+    // DevTools only in development — a customer build should never open it
+    // automatically. Electron security settings above (contextIsolation,
+    // nodeIntegration, sandbox, webPreferences) are unrelated and untouched.
+    if (!app.isPackaged) {
+        mainWindow.webContents.openDevTools();
+    }
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
@@ -199,6 +218,26 @@ ipcMain.handle('db:getConsultants', () => {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('[IPC] db:getConsultants failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getDepartmentsForDiagnosis', (event, diagnosisName) => {
+    try {
+        return getDepartmentsForDiagnosis(diagnosisName);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getDepartmentsForDiagnosis failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('db:getConsultantsForDepartment', (event, departmentName) => {
+    try {
+        return getConsultantsForDepartment(departmentName);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] db:getConsultantsForDepartment failed:', message);
         throw error;
     }
 });
@@ -367,6 +406,90 @@ ipcMain.handle('admin:setConsultantActive', (event, id, active) => {
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         console.error('[IPC] admin:setConsultantActive failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:listDepartments', () => {
+    try {
+        return listDepartmentsAdmin();
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:listDepartments failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:addDepartment', (event, name) => {
+    try {
+        return addDepartment(name);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:addDepartment failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:updateDepartment', (event, id, name) => {
+    try {
+        updateDepartmentName(id, name);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:updateDepartment failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:setDepartmentActive', (event, id, active) => {
+    try {
+        setDepartmentActive(id, active);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:setDepartmentActive failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:getDiagnosisDepartments', (event, diagnosisId) => {
+    try {
+        return getDiagnosisDepartmentIds(diagnosisId);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:getDiagnosisDepartments failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:setDiagnosisDepartments', (event, diagnosisId, departmentIds) => {
+    try {
+        setDiagnosisDepartments(diagnosisId, departmentIds);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:setDiagnosisDepartments failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:getDepartmentConsultants', (event, departmentId) => {
+    try {
+        return getDepartmentConsultantIds(departmentId);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:getDepartmentConsultants failed:', message);
+        throw error;
+    }
+});
+ipcMain.handle('admin:setDepartmentConsultants', (event, departmentId, consultantIds) => {
+    try {
+        setDepartmentConsultants(departmentId, consultantIds);
+        return { success: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[IPC] admin:setDepartmentConsultants failed:', message);
         throw error;
     }
 });

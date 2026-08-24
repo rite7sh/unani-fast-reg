@@ -25,7 +25,7 @@ export default function PrintSlip({ patient }: { patient: PatientData | null }) 
       <div className="print-slip-fields">
         <div className="print-slip-row">
           <span className="print-slip-field ps-opd">
-            <span className="print-slip-lbl">OPD No.</span>
+            <span className="print-slip-lbl">C.R. No.</span>
             <span className="print-slip-val ps-opd-val">{patient.opd_no}</span>
           </span>
           <span className="print-slip-field ps-date">
