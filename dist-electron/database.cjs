@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.setDepartmentActive = exports.updateDepartmentName = exports.addDepartment = exports.listDepartmentsAdmin = exports.setConsultantActive = exports.updateConsultantName = exports.addConsultant = exports.listConsultantsAdmin = exports.setDiagnosisActive = exports.updateDiagnosisName = exports.addDiagnosis = exports.listDiagnosesAdmin = void 0;
+exports.setDepartmentActive = exports.updateDepartmentName = exports.addDepartment = exports.listDepartmentsAdmin = exports.setConsultantActive = exports.updateConsultantName = exports.addConsultant = exports.listConsultantsAdmin = void 0;
 exports.initializeDatabase = initializeDatabase;
 exports.closeDatabase = closeDatabase;
 exports.previewNextOpdNumber = previewNextOpdNumber;
@@ -15,28 +15,56 @@ exports.getPatientAdmin = getPatientAdmin;
 exports.restorePatient = restorePatient;
 exports.updatePatient = updatePatient;
 exports.softDeletePatient = softDeletePatient;
-exports.getDiagnoses = getDiagnoses;
 exports.getConsultants = getConsultants;
-exports.getDepartmentsForDiagnosis = getDepartmentsForDiagnosis;
+exports.getDepartments = getDepartments;
 exports.getConsultantsForDepartment = getConsultantsForDepartment;
-exports.getDiagnosisDepartmentIds = getDiagnosisDepartmentIds;
-exports.setDiagnosisDepartments = setDiagnosisDepartments;
 exports.getDepartmentConsultantIds = getDepartmentConsultantIds;
 exports.setDepartmentConsultants = setDepartmentConsultants;
 exports.hasAdminPassword = hasAdminPassword;
 exports.setAdminPassword = setAdminPassword;
 exports.verifyAdminPassword = verifyAdminPassword;
 exports.changeAdminPassword = changeAdminPassword;
+exports.recoverAdminPassword = recoverAdminPassword;
 exports.getDashboardStats = getDashboardStats;
+exports.getBackupCustomLocation = getBackupCustomLocation;
+exports.validateBackupLocation = validateBackupLocation;
+exports.setBackupCustomLocation = setBackupCustomLocation;
 exports.verifyBackup = verifyBackup;
 exports.pruneOldBackups = pruneOldBackups;
 exports.createBackup = createBackup;
+exports.createManualBackup = createManualBackup;
 exports.ensureTodayBackup = ensureTodayBackup;
 exports.getBackupStatus = getBackupStatus;
+exports.getDefaultBackupLocation = getDefaultBackupLocation;
+exports.getLatestBackupFilePath = getLatestBackupFilePath;
+exports.getLocalBackupFilePath = getLocalBackupFilePath;
+exports.replaceLiveDatabaseFile = replaceLiveDatabaseFile;
+exports.getDeviceCredentials = getDeviceCredentials;
+exports.getPairedApiUrl = getPairedApiUrl;
+exports.setDeviceCredentials = setDeviceCredentials;
+exports.clearDeviceCredentials = clearDeviceCredentials;
+exports.getLanServerEnabled = getLanServerEnabled;
+exports.setLanServerEnabled = setLanServerEnabled;
+exports.getLanServerPort = getLanServerPort;
+exports.setLanServerPort = setLanServerPort;
+exports.getOrCreateLanServerSetupToken = getOrCreateLanServerSetupToken;
 exports.getReturningPatientAddress = getReturningPatientAddress;
 exports.getAdminAnalytics = getAdminAnalytics;
+exports.getReportPreviewRows = getReportPreviewRows;
 exports.exportPatientsCsv = exportPatientsCsv;
+exports.exportConsultantsCsv = exportConsultantsCsv;
+exports.exportPatientsListCsv = exportPatientsListCsv;
 exports.listBackups = listBackups;
+exports.getUnsyncedPatients = getUnsyncedPatients;
+exports.getSyncPendingCount = getSyncPendingCount;
+exports.markPatientsSynced = markPatientsSynced;
+exports.markPatientsSyncFailed = markPatientsSyncFailed;
+exports.upsertSyncedPatientFromServer = upsertSyncedPatientFromServer;
+exports.getSyncCursor = getSyncCursor;
+exports.setSyncCursor = setSyncCursor;
+exports.recordSyncPushResult = recordSyncPushResult;
+exports.recordSyncPullResult = recordSyncPullResult;
+exports.getSyncStatus = getSyncStatus;
 const electron_1 = require("electron");
 const node_fs_1 = __importDefault(require("node:fs"));
 const path_1 = __importDefault(require("path"));
@@ -62,6 +90,42 @@ function addColumnIfMissing(table, column, type) {
     if (!existing.some((c) => c.name === column)) {
         db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
     }
+}
+// HH:mm:ss from a Date's LOCAL time components — never UTC. created_at
+// stores toISOString() (UTC), so this is deliberately not reused for that
+// column; it's the one place registration_time is computed, for both new
+// registrations (registerPatient()) and the historical backfill below.
+function formatLocalTime(d) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+// One-time-per-row backfill: existing patients have no registration_time
+// (the column was just added, nullable, on every row). created_at is a
+// precise UTC instant already on every row (NOT NULL since the table was
+// created), so re-parsing it with `new Date()` and reading LOCAL time
+// components on this same machine correctly reconstructs the original
+// wall-clock registration time — this is a single-machine, single-timezone
+// desktop install, so "this machine's current local time interpretation of
+// that instant" is the same timezone the registration actually happened
+// in. Idempotent (only ever touches rows still NULL) and safe to call on
+// every startup. Never invents a time for a row with no created_at.
+function backfillRegistrationTime() {
+    const rows = db
+        .prepare(`SELECT id, created_at FROM patients WHERE registration_time IS NULL AND created_at IS NOT NULL`)
+        .all();
+    if (rows.length === 0)
+        return;
+    const update = db.prepare('UPDATE patients SET registration_time = ? WHERE id = ?');
+    const run = db.transaction((items) => {
+        for (const row of items) {
+            const parsed = new Date(row.created_at);
+            if (isNaN(parsed.getTime()))
+                continue; // malformed created_at — left NULL, never guessed
+            update.run(formatLocalTime(parsed), row.id);
+        }
+    });
+    run(rows);
+    console.log(`[Database] Backfilled registration_time for ${rows.length} existing record(s)`);
 }
 function initializeDatabase() {
     if (isInitialized && db) {
@@ -107,14 +171,6 @@ function initializeDatabase() {
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
 
-      CREATE TABLE IF NOT EXISTS diagnoses (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL UNIQUE,
-        active INTEGER NOT NULL DEFAULT 1,
-        sort_order INTEGER NOT NULL,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-      );
-
       CREATE TABLE IF NOT EXISTS consultants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE,
@@ -123,7 +179,6 @@ function initializeDatabase() {
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       );
 
-      CREATE INDEX IF NOT EXISTS idx_diagnoses_active ON diagnoses(active);
       CREATE INDEX IF NOT EXISTS idx_consultants_active ON consultants(active);
 
       CREATE TABLE IF NOT EXISTS departments (
@@ -136,18 +191,21 @@ function initializeDatabase() {
 
       CREATE INDEX IF NOT EXISTS idx_departments_active ON departments(active);
 
-      CREATE TABLE IF NOT EXISTS diagnosis_departments (
-        diagnosis_id INTEGER NOT NULL REFERENCES diagnoses(id),
-        department_id INTEGER NOT NULL REFERENCES departments(id),
-        PRIMARY KEY (diagnosis_id, department_id)
-      );
-
       CREATE TABLE IF NOT EXISTS department_consultants (
         department_id INTEGER NOT NULL REFERENCES departments(id),
         consultant_id INTEGER NOT NULL REFERENCES consultants(id),
         PRIMARY KEY (department_id, consultant_id)
       );
     `);
+        // Diagnosis was removed as an application concept. diagnoses/
+        // diagnosis_departments held ONLY admin-managed dropdown options and
+        // their department mappings — never patient data (patients.diagnosis
+        // is a free-text column, not a foreign key into diagnoses.id) — so
+        // dropping them is safe and carries zero risk to any patient record.
+        // patients.diagnosis/diagnosis_other themselves are NOT touched here;
+        // see the Patient interface comment for why those stay.
+        db.exec('DROP TABLE IF EXISTS diagnosis_departments');
+        db.exec('DROP TABLE IF EXISTS diagnoses');
         // patients pre-dates department/aadhaar_number/mobile_number — unlike
         // every other table here, it can already have rows on an existing
         // install, and SQLite's ADD COLUMN isn't idempotent (re-running it on a
@@ -159,8 +217,11 @@ function initializeDatabase() {
         addColumnIfMissing('patients', 'department', 'TEXT');
         addColumnIfMissing('patients', 'aadhaar_number', 'TEXT');
         addColumnIfMissing('patients', 'mobile_number', 'TEXT');
+        addColumnIfMissing('patients', 'registration_time', 'TEXT');
+        backfillRegistrationTime();
         seedMasterData();
-        seedPlaceholderDepartmentMappings();
+        removePlaceholderMasterData();
+        seedRealDepartmentConsultantMappings();
         isInitialized = true;
         console.log('[Database] Initialization complete');
     }
@@ -178,24 +239,29 @@ function closeDatabase() {
         console.log('[Database] Closed');
     }
 }
+// Format changed from OPD-YYYY-##### to CR-YYYY-##### per client request.
+// Existing OPD- rows are never renamed or touched — this function only
+// controls what NEW rows get. To guarantee a new CR- number can never
+// collide with (or restart behind) an existing OPD- number for the same
+// year, it scans BOTH prefixes and continues from whichever is highest —
+// the sequence stays continuous across the format change instead of
+// resetting to 1 the moment the prefix changed.
 function getNextOpdNumber() {
     const today = new Date();
     const year = today.getFullYear();
-    // Get the last OPD number for today's year
-    const stmt = db.prepare(`
-    SELECT opd_no FROM patients 
-    WHERE opd_no LIKE ? 
-    ORDER BY id DESC LIMIT 1
-  `);
-    const lastRecord = stmt.get(`OPD-${year}-%`);
-    let nextNumber = 1;
-    if (lastRecord) {
-        const parts = lastRecord.opd_no.split('-');
-        const lastNum = parseInt(parts[2], 10);
-        nextNumber = lastNum + 1;
+    const rows = db
+        .prepare(`SELECT opd_no FROM patients WHERE opd_no LIKE ? OR opd_no LIKE ?`)
+        .all(`OPD-${year}-%`, `CR-${year}-%`);
+    let maxNumber = 0;
+    for (const row of rows) {
+        const parts = row.opd_no.split('-');
+        const n = parseInt(parts[parts.length - 1], 10);
+        if (!Number.isNaN(n) && n > maxNumber) {
+            maxNumber = n;
+        }
     }
-    const paddedNum = String(nextNumber).padStart(5, '0');
-    return `OPD-${year}-${paddedNum}`;
+    const paddedNum = String(maxNumber + 1).padStart(5, '0');
+    return `CR-${year}-${paddedNum}`;
 }
 // Read-only preview of the OPD number that would be assigned next.
 // Does not reserve or persist anything — reuses the exact same
@@ -212,20 +278,26 @@ function registerPatient(patient) {
         throw new Error('Database not initialized');
     }
     const opdNo = getNextOpdNumber();
-    const now = new Date().toISOString();
+    const nowDate = new Date();
+    const now = nowDate.toISOString();
+    const registrationTime = formatLocalTime(nowDate);
     const stmt = db.prepare(`
     INSERT INTO patients (
-      opd_no, registration_date, patient_name, age_years, age_months,
+      opd_no, registration_date, registration_time, patient_name, age_years, age_months,
       gender, address, aadhaar_number, mobile_number, diagnosis,
       diagnosis_other, department, consultant,
       employee_id, created_at, updated_at, is_deleted, synced
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0)
   `);
-    const result = stmt.run(opdNo, patient.registration_date, patient.patient_name, patient.age_years, patient.age_months, patient.gender, patient.address, patient.aadhaar_number || null, patient.mobile_number || null, patient.diagnosis, patient.diagnosis_other || null, patient.department || null, patient.consultant, patient.employee_id, now, now);
+    // diagnosis is legacy NOT NULL — Registration no longer collects it, so
+    // every new row gets '' rather than altering the column's constraint
+    // (see the Patient interface comment for why the column itself stays).
+    const result = stmt.run(opdNo, patient.registration_date, registrationTime, patient.patient_name, patient.age_years, patient.age_months, patient.gender, patient.address, patient.aadhaar_number || null, patient.mobile_number || null, '', null, patient.department || null, patient.consultant, patient.employee_id, now, now);
     return {
         id: result.lastInsertRowid,
         opd_no: opdNo,
         ...patient,
+        registration_time: registrationTime,
         created_at: now,
         updated_at: now,
     };
@@ -273,7 +345,7 @@ function searchPatients(query, registrationDate, includeDeleted = false) {
     const stmt = db.prepare(`
     SELECT
       id, opd_no, patient_name, age_years, age_months,
-      gender, address, diagnosis, registration_date, consultant, is_deleted
+      gender, address, registration_date, registration_time, department, consultant, is_deleted
     FROM patients
     WHERE ${conditions.join(' AND ')}
     ORDER BY registration_date DESC
@@ -305,7 +377,7 @@ function restorePatient(id) {
         throw new Error('Database not initialized');
     }
     const now = new Date().toISOString();
-    db.prepare(`UPDATE patients SET is_deleted = 0, updated_at = ? WHERE id = ?`).run(now, id);
+    db.prepare(`UPDATE patients SET is_deleted = 0, updated_at = ?, synced = 0, sync_error = NULL WHERE id = ?`).run(now, id);
 }
 function updatePatient(id, updates) {
     if (!db || !isInitialized) {
@@ -333,8 +405,6 @@ function updatePatient(id, updates) {
         'address',
         'aadhaar_number',
         'mobile_number',
-        'diagnosis',
-        'diagnosis_other',
         'department',
         'consultant',
     ];
@@ -349,6 +419,10 @@ function updatePatient(id, updates) {
     }
     updateFields.push('updated_at = ?');
     updateValues.push(now);
+    // Any local write invalidates whatever the server last confirmed for
+    // this row — see the sync section below for how this flag is consumed.
+    updateFields.push('synced = 0');
+    updateFields.push('sync_error = NULL');
     updateValues.push(id);
     const stmt = db.prepare(`
     UPDATE patients SET ${updateFields.join(', ')} WHERE id = ?
@@ -362,82 +436,17 @@ function softDeletePatient(id) {
     }
     const now = new Date().toISOString();
     const stmt = db.prepare(`
-    UPDATE patients SET is_deleted = 1, updated_at = ? WHERE id = ?
+    UPDATE patients SET is_deleted = 1, updated_at = ?, synced = 0, sync_error = NULL WHERE id = ?
   `);
     stmt.run(now, id);
 }
-// Seeded once, only when the diagnoses/consultants tables are empty (fresh
-// install or first run after this migration) — same values, same order as
-// the hardcoded lists this replaced, so existing installs see no change in
-// their dropdowns. "Other" is intentionally excluded: it's a UI sentinel
-// for free-text entry (see RegistrationScreen.tsx), not a manageable
-// diagnosis, so it's appended client-side instead of stored here.
-const SEED_DIAGNOSES = [
-    "Nazla (Coryza)",
-    "Zukam (Common Cold)",
-    "Suaal (Cough)",
-    "Zeequn Nafas (Asthma)",
-    "Zaat-ur-Riya (Pneumonia)",
-    "Sil (Tuberculosis)",
-    "Humma (Fever)",
-    "Humma Muhriqa (High Fever)",
-    "Humma Diqqiya (Hectic Fever)",
-    "Waram (Inflammation)",
-    "Waram-e-Halq (Pharyngitis)",
-    "Waram-e-Lauzatain (Tonsillitis)",
-    "Waram-e-Kabid (Hepatitis)",
-    "Waram-e-Kulya (Nephritis)",
-    "Waram-e-Masana (Cystitis)",
-    "Waja-ul-Mafasil (Arthritis)",
-    "Niqras (Gout)",
-    "Waja-ul-Zahr (Backache)",
-    "Irqun Nasa (Sciatica)",
-    "Waja-ur-Raqba (Cervical Pain)",
-    "Falij (Paralysis)",
-    "Laqwa (Facial Palsy)",
-    "Raasha (Tremor)",
-    "Sara (Epilepsy)",
-    "Suda (Headache)",
-    "Shaqiqa (Migraine)",
-    "Dawar (Vertigo)",
-    "Sahar (Insomnia)",
-    "Malikholia (Melancholia)",
-    "Bars (Vitiligo)",
-    "Bahaq (Tinea Versicolor)",
-    "Da-us-Sadaf (Psoriasis)",
-    "Quba (Ringworm)",
-    "Hikka (Pruritus)",
-    "Shara (Urticaria)",
-    "Busoor-e-Labaniya (Acne)",
-    "Da-us-Salab (Alopecia Areata)",
-    "Zof-e-Meda (Dyspepsia)",
-    "Qabz (Constipation)",
-    "Ishaal (Diarrhoea)",
-    "Zaheer (Dysentery)",
-    "Qai (Vomiting)",
-    "Yarqan (Jaundice)",
-    "Istisqa (Ascites)",
-    "Bawaseer (Piles)",
-    "Sheqaq-e-Maqad (Anal Fissure)",
-    "Deedan-e-Ama (Intestinal Worms)",
-    "Zayabetus (Diabetes Mellitus)",
-    "Zaghtud Dam Qawi (Hypertension)",
-    "Zaghtud Dam Zaeef (Hypotension)",
-    "Faqrud Dam (Anaemia)",
-    "Siman-e-Mufrit (Obesity)",
-    "Zof-e-Qalb (Cardiac Weakness)",
-    "Hasat-e-Kulya (Renal Calculi)",
-    "Salasul Baul (Enuresis)",
-    "Ihtebas-e-Baul (Urinary Retention)",
-    "Su-e-Haiz (Menstrual Disorder)",
-    "Usr-e-Tams (Dysmenorrhoea)",
-    "Kasrat-e-Tams (Menorrhagia)",
-    "Sailanur Rahm (Leucorrhoea)",
-    "Zof-e-Basar (Weak Eyesight)",
-    "Ramad (Conjunctivitis)",
-    "Waja-ul-Uzn (Earache)",
-    "Waja-ul-Asnan (Toothache)",
-];
+// Seeded once, only when the consultants table is empty (fresh install) —
+// the original 5-consultant list this hospital used before the
+// Department→Consultant structure existed. Left as-is deliberately: these
+// names are referenced by real historical patient records, and none of
+// them appear in the real Department→Consultant Excel (they predate it),
+// so they simply end up mapped to zero departments — unreachable from
+// Registration going forward without being deleted or touched.
 const SEED_CONSULTANTS = [
     "Dr. Mohd. Ashraf — BUMS",
     "Dr. A. R. Ansari — BUMS, MD (Moalajat)",
@@ -446,14 +455,6 @@ const SEED_CONSULTANTS = [
     "Dr. K. Rahman — BUMS (General OPD)",
 ];
 function seedMasterData() {
-    const diagnosisCount = db.prepare('SELECT COUNT(*) AS count FROM diagnoses').get().count;
-    if (diagnosisCount === 0) {
-        const insert = db.prepare('INSERT INTO diagnoses (name, active, sort_order) VALUES (?, 1, ?)');
-        const insertAll = db.transaction((names) => {
-            names.forEach((name, index) => insert.run(name, index));
-        });
-        insertAll(SEED_DIAGNOSES);
-    }
     const consultantCount = db.prepare('SELECT COUNT(*) AS count FROM consultants').get().count;
     if (consultantCount === 0) {
         const insert = db.prepare('INSERT INTO consultants (name, active, sort_order) VALUES (?, 1, ?)');
@@ -463,37 +464,38 @@ function seedMasterData() {
         insertAll(SEED_CONSULTANTS);
     }
 }
-// ============================================
-// PLACEHOLDER TEST DATA — Diagnosis → Department → Consultant chain
-// ============================================
-//
-// The real hospital's department structure and diagnosis/consultant
-// mappings were not available when this feature was built (see project
-// history). These names are deliberately obvious fakes ("Diagnosis 1",
-// "Department A", "Doctor X", ...) so they can never be mistaken for real
-// data, and are added ON TOP of the existing real SEED_DIAGNOSES /
-// SEED_CONSULTANTS lists — nothing real is replaced or touched.
-//
-// To remove/replace once real data arrives: delete these rows (and their
-// mappings) via the Admin > Diagnoses / Departments / Consultants screens,
-// or directly from the diagnoses/consultants/departments/
-// diagnosis_departments/department_consultants tables — no code or schema
-// change is required either way, since this is ordinary master-data rows,
-// not anything hardcoded into the application.
-const PLACEHOLDER_DIAGNOSES = ['Diagnosis 1', 'Diagnosis 2', 'Diagnosis 3'];
-const PLACEHOLDER_DEPARTMENTS = ['Department A', 'Department B', 'Department C', 'Department X'];
-const PLACEHOLDER_CONSULTANTS = ['Doctor X', 'Doctor Y', 'Doctor Z', 'Consultant 1', 'Consultant 2'];
-const PLACEHOLDER_DIAGNOSIS_DEPARTMENTS = {
-    'Diagnosis 1': ['Department A', 'Department B'],
-    'Diagnosis 2': ['Department B', 'Department C'],
-    'Diagnosis 3': ['Department X'],
-};
-const PLACEHOLDER_DEPARTMENT_CONSULTANTS = {
-    'Department A': ['Doctor X', 'Consultant 1'],
-    'Department B': ['Doctor Y'],
-    'Department C': ['Doctor Z', 'Consultant 2'],
-    'Department X': ['Consultant 1'],
-};
+// Deliberately obvious fake names used while the real Department →
+// Consultant structure was still pending from the client. Now that the
+// real data (below) has arrived, these — and any mappings referencing
+// them — are removed by exact name on every startup. Idempotent: once
+// gone, these DELETEs simply match zero rows on subsequent runs. Any
+// patient record that happened to store one of these names as historical
+// free text (department/consultant columns aren't foreign keys) is
+// completely unaffected — only the master-data catalog rows are removed.
+const OBSOLETE_PLACEHOLDER_DEPARTMENTS = ['Department A', 'Department B', 'Department C', 'Department X'];
+const OBSOLETE_PLACEHOLDER_CONSULTANTS = ['Doctor X', 'Doctor Y', 'Doctor Z', 'Consultant 1', 'Consultant 2'];
+function removePlaceholderMasterData() {
+    const placeholderDeptIds = db
+        .prepare(`SELECT id FROM departments WHERE name IN (${OBSOLETE_PLACEHOLDER_DEPARTMENTS.map(() => '?').join(',')})`)
+        .all(...OBSOLETE_PLACEHOLDER_DEPARTMENTS);
+    const placeholderConsIds = db
+        .prepare(`SELECT id FROM consultants WHERE name IN (${OBSOLETE_PLACEHOLDER_CONSULTANTS.map(() => '?').join(',')})`)
+        .all(...OBSOLETE_PLACEHOLDER_CONSULTANTS);
+    for (const { id } of placeholderDeptIds) {
+        db.prepare('DELETE FROM department_consultants WHERE department_id = ?').run(id);
+    }
+    for (const { id } of placeholderConsIds) {
+        db.prepare('DELETE FROM department_consultants WHERE consultant_id = ?').run(id);
+    }
+    if (OBSOLETE_PLACEHOLDER_DEPARTMENTS.length > 0) {
+        db.prepare(`DELETE FROM departments WHERE name IN (${OBSOLETE_PLACEHOLDER_DEPARTMENTS.map(() => '?').join(',')})`)
+            .run(...OBSOLETE_PLACEHOLDER_DEPARTMENTS);
+    }
+    if (OBSOLETE_PLACEHOLDER_CONSULTANTS.length > 0) {
+        db.prepare(`DELETE FROM consultants WHERE name IN (${OBSOLETE_PLACEHOLDER_CONSULTANTS.map(() => '?').join(',')})`)
+            .run(...OBSOLETE_PLACEHOLDER_CONSULTANTS);
+    }
+}
 // Adds one named row to a master-data table if it isn't already there
 // (by UNIQUE name), returning its id either way. Idempotent across
 // restarts — safe to call every startup. Operates on `db` directly rather
@@ -510,37 +512,95 @@ function ensureMasterDataRow(table, name) {
     const result = db.prepare(`INSERT INTO ${table} (name, active, sort_order) VALUES (?, 1, ?)`).run(name, nextOrder);
     return result.lastInsertRowid;
 }
-function seedPlaceholderDepartmentMappings() {
-    const diagnosisIds = new Map(PLACEHOLDER_DIAGNOSES.map((name) => [name, ensureMasterDataRow('diagnoses', name)]));
-    const departmentIds = new Map(PLACEHOLDER_DEPARTMENTS.map((name) => [name, ensureMasterDataRow('departments', name)]));
-    const consultantIds = new Map(PLACEHOLDER_CONSULTANTS.map((name) => [name, ensureMasterDataRow('consultants', name)]));
-    const insertDiagDept = db.prepare('INSERT OR IGNORE INTO diagnosis_departments (diagnosis_id, department_id) VALUES (?, ?)');
-    for (const [diagnosisName, departmentNames] of Object.entries(PLACEHOLDER_DIAGNOSIS_DEPARTMENTS)) {
-        const diagnosisId = diagnosisIds.get(diagnosisName);
-        for (const departmentName of departmentNames) {
-            insertDiagDept.run(diagnosisId, departmentIds.get(departmentName));
-        }
-    }
+// ============================================
+// REAL Department -> Consultant data, extracted verbatim from the
+// client-provided "Department_Consultant Name.xlsx" (Department Name /
+// Consultant Name columns only — no data invented or inferred). Some
+// consultants legitimately belong to more than one department (e.g. Dr.
+// Sunil Wane, Dr. Heena Kausar), which is exactly why the many-to-many
+// department_consultants table is preserved rather than flattened.
+// ============================================
+const REAL_DEPARTMENTS = [
+    'ILMUL JARAHAT (शल्य चिकित्सा)',
+    'Amraze Ain, Uzn, Anf wa Halaq (नेत्र, कान, नाक एवं गला रोग)',
+    'Moalajat (मेडिसिन)',
+    'Amraze Niswan wa Qabalat (प्रसूति एवं स्त्री रोग)',
+    'Amraze Jild wa Tazeeniyat (स्किन एवं कॉस्मेटिक)',
+    'Tahaffuzi wa Samaji Tib (निवारक एवं सामाजिक चिकित्सा)',
+    'Haj Bit Tadbeer (रेजिमिनल थैरेपी)',
+    'Amraze Atfal (शिशु रोग)',
+    'Dental (दन्त रोग)',
+    'Emergency (आपातकालीन चिकित्सा)',
+    'Ilmul Samoom (विष विज्ञान)',
+    'Screening',
+];
+const REAL_DEPARTMENT_CONSULTANTS = {
+    'ILMUL JARAHAT (शल्य चिकित्सा)': ['Dr. Rizwan Ullah (M.S.)', 'Dr. Sunil Wane (C.R.)'],
+    'Amraze Ain, Uzn, Anf wa Halaq (नेत्र, कान, नाक एवं गला रोग)': [
+        'Dr. Irshad Ahmad (M.D.)',
+        'Dr. Mohammad Arif (M.D.)',
+    ],
+    'Moalajat (मेडिसिन)': ['Dr. Kehkashan Jafri (M.D.)', 'Dr. S.M. Abbas Zaidi (M.D.)', 'Dr. Tariq Shaikh (M.D.)'],
+    'Amraze Niswan wa Qabalat (प्रसूति एवं स्त्री रोग)': [
+        'Dr. (Prof.) S. Nafees Bano (M.D.)',
+        'Dr. Shamim Ansari (M.S.)',
+        'Dr. Heena Kausar (M.D.)',
+        'Dr. Zareena Khatoon (M.D.)',
+        'Dr. Arshi Anjum (M.S.)',
+    ],
+    'Amraze Jild wa Tazeeniyat (स्किन एवं कॉस्मेटिक)': [
+        'Dr. (Prof.) Mohd. Anzar Jusain (HOD)',
+        'Dr. Dilshad Ali (M.D.)',
+        'Dr. Mohammad Rizwan (M.D.)',
+        'Dr. Munawwar Gauri (M.D.)',
+    ],
+    'Tahaffuzi wa Samaji Tib (निवारक एवं सामाजिक चिकित्सा)': ['Dr. Mahfoozur Rahman (M.D.)'],
+    'Haj Bit Tadbeer (रेजिमिनल थैरेपी)': [
+        'Dr. (Prof.) Mehmooda Begum (M.D.)',
+        'Dr. Arif Anees (M.D.)',
+        'Dr. Ehsan Ahmad (M.D.)',
+        'Dr. Abdul Rehman (M.D.)',
+        'Dr. Munawwar Gauri (M.D.)',
+    ],
+    'Amraze Atfal (शिशु रोग)': ['Dr. Heena Kausar (M.D.)', 'Dr. Zareena Khatoon (M.D.)', 'Dr. Arshi Anjum (M.S.)'],
+    'Dental (दन्त रोग)': ['Sr. Sadaf Fatima (B.D.S.)'],
+    'Emergency (आपातकालीन चिकित्सा)': ['Dr. Pooja Shrivastava (M.B.B.S.,M.S.)', 'Dr. Sunil Wane (C.R.)'],
+    'Ilmul Samoom (विष विज्ञान)': [
+        'Dr. (Prof.) Iftekhar Ahmad (M.D.)',
+        'Dr. Intezar Ahmad (M.D.)',
+        'Dr. Mohd. Naseem Khan (M.D.)',
+    ],
+    Screening: ['Dr. Asna Zafar (U.M.O.)'],
+};
+// Idempotent: ensureMasterDataRow() no-ops on names already present, and
+// the mapping insert uses INSERT OR IGNORE against the composite primary
+// key — safe to run on every startup.
+function seedRealDepartmentConsultantMappings() {
+    const departmentIds = new Map(REAL_DEPARTMENTS.map((name) => [name, ensureMasterDataRow('departments', name)]));
+    const consultantNames = Array.from(new Set(Object.values(REAL_DEPARTMENT_CONSULTANTS).flat()));
+    const consultantIds = new Map(consultantNames.map((name) => [name, ensureMasterDataRow('consultants', name)]));
     const insertDeptCons = db.prepare('INSERT OR IGNORE INTO department_consultants (department_id, consultant_id) VALUES (?, ?)');
-    for (const [departmentName, consultantNames] of Object.entries(PLACEHOLDER_DEPARTMENT_CONSULTANTS)) {
+    for (const [departmentName, names] of Object.entries(REAL_DEPARTMENT_CONSULTANTS)) {
         const departmentId = departmentIds.get(departmentName);
-        for (const consultantName of consultantNames) {
+        for (const consultantName of names) {
             insertDeptCons.run(departmentId, consultantIds.get(consultantName));
         }
     }
-}
-function getDiagnoses() {
-    if (!db || !isInitialized) {
-        throw new Error('Database not initialized');
-    }
-    const rows = db.prepare('SELECT name FROM diagnoses WHERE active = 1 ORDER BY sort_order').all();
-    return rows.map((r) => r.name);
 }
 function getConsultants() {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
     const rows = db.prepare('SELECT name FROM consultants WHERE active = 1 ORDER BY sort_order').all();
+    return rows.map((r) => r.name);
+}
+// Flat, active-only department list — used by Registration to populate the
+// Department dropdown directly (no longer gated by Diagnosis).
+function getDepartments() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const rows = db.prepare('SELECT name FROM departments WHERE active = 1 ORDER BY sort_order').all();
     return rows.map((r) => r.name);
 }
 function listMasterData(table) {
@@ -558,6 +618,14 @@ function addMasterDataItem(table, name) {
     if (!trimmed) {
         throw new Error('Name is required');
     }
+    // name is UNIQUE at the schema level (the real, enforced guarantee) — this
+    // check exists only so a duplicate reads as a plain "already exists"
+    // message instead of the raw SQLite constraint-violation text a hospital
+    // admin would otherwise see verbatim in the error banner.
+    const existing = db.prepare(`SELECT id FROM ${table} WHERE name = ?`).get(trimmed);
+    if (existing) {
+        throw new Error(`"${trimmed}" already exists.`);
+    }
     const maxOrder = db.prepare(`SELECT MAX(sort_order) AS maxOrder FROM ${table}`).get().maxOrder;
     const nextOrder = (maxOrder ?? -1) + 1;
     const result = db
@@ -573,6 +641,10 @@ function updateMasterDataName(table, id, name) {
     if (!trimmed) {
         throw new Error('Name is required');
     }
+    const existing = db.prepare(`SELECT id FROM ${table} WHERE name = ? AND id != ?`).get(trimmed, id);
+    if (existing) {
+        throw new Error(`"${trimmed}" already exists.`);
+    }
     db.prepare(`UPDATE ${table} SET name = ? WHERE id = ?`).run(trimmed, id);
 }
 function setMasterDataActive(table, id, active) {
@@ -581,14 +653,6 @@ function setMasterDataActive(table, id, active) {
     }
     db.prepare(`UPDATE ${table} SET active = ? WHERE id = ?`).run(active ? 1 : 0, id);
 }
-const listDiagnosesAdmin = () => listMasterData('diagnoses');
-exports.listDiagnosesAdmin = listDiagnosesAdmin;
-const addDiagnosis = (name) => addMasterDataItem('diagnoses', name);
-exports.addDiagnosis = addDiagnosis;
-const updateDiagnosisName = (id, name) => updateMasterDataName('diagnoses', id, name);
-exports.updateDiagnosisName = updateDiagnosisName;
-const setDiagnosisActive = (id, active) => setMasterDataActive('diagnoses', id, active);
-exports.setDiagnosisActive = setDiagnosisActive;
 const listConsultantsAdmin = () => listMasterData('consultants');
 exports.listConsultantsAdmin = listConsultantsAdmin;
 const addConsultant = (name) => addMasterDataItem('consultants', name);
@@ -606,33 +670,16 @@ exports.updateDepartmentName = updateDepartmentName;
 const setDepartmentActive = (id, active) => setMasterDataActive('departments', id, active);
 exports.setDepartmentActive = setDepartmentActive;
 // ============================================
-// Admin — Diagnosis → Department → Consultant mappings
+// Admin — Department → Consultant mappings
 // ============================================
 //
-// Both diagnosis and consultant stay free-text on `patients` (see Patient
-// interface) so a mapping change here can never corrupt a historical
-// record — these tables only ever influence what the Registration/Admin
-// dropdowns *offer*, the same way diagnoses/consultants already work.
-// Departments mapped to a given diagnosis, by name — used by Registration
-// and Admin's patient edit to populate the Department dropdown once a
-// Diagnosis is chosen. Active departments only, in sort_order.
-function getDepartmentsForDiagnosis(diagnosisName) {
-    if (!db || !isInitialized) {
-        throw new Error('Database not initialized');
-    }
-    const diagnosis = db.prepare('SELECT id FROM diagnoses WHERE name = ?').get(diagnosisName);
-    if (!diagnosis)
-        return [];
-    const rows = db
-        .prepare(`SELECT d.name AS name FROM departments d
-       JOIN diagnosis_departments dd ON dd.department_id = d.id
-       WHERE dd.diagnosis_id = ? AND d.active = 1
-       ORDER BY d.sort_order`)
-        .all(diagnosis.id);
-    return rows.map((r) => r.name);
-}
-// Consultants mapped to a given department, by name — same role as
-// getDepartmentsForDiagnosis, one level down the chain.
+// Consultant stays free-text on `patients` (see Patient interface) so a
+// mapping change here can never corrupt a historical record — this table
+// only ever influences what the Registration/Admin dropdown *offers*, the
+// same way department/consultant master data already works.
+// Consultants mapped to a given department, by name — used by
+// Registration and Admin's patient edit to populate the Consultant
+// dropdown once a Department is chosen. Active consultants only.
 function getConsultantsForDepartment(departmentName) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
@@ -648,34 +695,8 @@ function getConsultantsForDepartment(departmentName) {
         .all(department.id);
     return rows.map((r) => r.name);
 }
-// Admin-facing: which department IDs are currently mapped to a diagnosis
-// (including inactive departments, so Admin's checklist can show them).
-function getDiagnosisDepartmentIds(diagnosisId) {
-    if (!db || !isInitialized) {
-        throw new Error('Database not initialized');
-    }
-    const rows = db
-        .prepare('SELECT department_id FROM diagnosis_departments WHERE diagnosis_id = ?')
-        .all(diagnosisId);
-    return rows.map((r) => r.department_id);
-}
-// Replaces the full set of departments mapped to a diagnosis in one
-// transaction (delete-then-reinsert) — Admin's checklist always submits
-// the complete desired set, never an incremental add/remove.
-function setDiagnosisDepartments(diagnosisId, departmentIds) {
-    if (!db || !isInitialized) {
-        throw new Error('Database not initialized');
-    }
-    const run = db.transaction((ids) => {
-        db.prepare('DELETE FROM diagnosis_departments WHERE diagnosis_id = ?').run(diagnosisId);
-        const insert = db.prepare('INSERT INTO diagnosis_departments (diagnosis_id, department_id) VALUES (?, ?)');
-        for (const departmentId of ids) {
-            insert.run(diagnosisId, departmentId);
-        }
-    });
-    run(departmentIds);
-}
-// Admin-facing equivalent of getDiagnosisDepartmentIds, one level down.
+// Admin-facing: which consultant IDs are currently mapped to a department
+// (including inactive consultants, so Admin's checklist can show them).
 function getDepartmentConsultantIds(departmentId) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
@@ -756,23 +777,109 @@ function changeAdminPassword(currentPassword, newPassword) {
     setAdminPassword(newPassword);
     return true;
 }
+// ============================================
+// Admin — Password recovery ("Forgot Password?")
+// ============================================
+//
+// One fixed recovery code, the same on every installation, known only to
+// the supplier — entering it on the "Forgot Password?" screen lets an
+// admin set a brand new password without any database access. Simple by
+// deliberate choice: a support-desk fallback for a low-stakes internal
+// tool, not a hardened credential. Stored hashed (not as a literal string
+// in the compiled app) purely as basic hygiene — this does not change
+// what the code actually protects against.
+//
+// SHA-256 of the recovery code — never the plain code itself, so it isn't
+// a literal, searchable string in the built app. To change the code:
+// compute a new hash (e.g. `node -e "console.log(require('crypto').createHash('sha256').update('NEWCODE').digest('hex'))"`)
+// and replace the constant below.
+const RECOVERY_CODE_HASH_HEX = '4a9ca4596692e94f9d2912b06a0d007564a22ee750339a6021c2392149b25d6d';
+function verifyRecoveryCode(code) {
+    const candidate = node_crypto_1.default.createHash('sha256').update(code.trim()).digest();
+    const expected = Buffer.from(RECOVERY_CODE_HASH_HEX, 'hex');
+    if (candidate.length !== expected.length)
+        return false;
+    return node_crypto_1.default.timingSafeEqual(candidate, expected);
+}
+// One combined action, not verify-then-separately-set — there's no window
+// where a verified-but-unused code sits around unused. A failed attempt
+// leaves the existing password completely untouched.
+function recoverAdminPassword(recoveryCode, newPassword) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    if (!verifyRecoveryCode(recoveryCode)) {
+        return { success: false, error: 'Incorrect recovery code.' };
+    }
+    try {
+        setAdminPassword(newPassword);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { success: false, error: message };
+    }
+    return { success: true };
+}
+// Exact-match on each provided field, ANDed together — mirrors how
+// Registration writes these columns (plain text, not foreign keys), so a
+// filter value from getDepartments()/getConsultants()/getConsultantsForDepartment()
+// always matches verbatim.
+function buildPatientFilterClause(filters) {
+    const conditions = [];
+    const params = [];
+    if (filters.gender) {
+        conditions.push('gender = ?');
+        params.push(filters.gender);
+    }
+    if (filters.department) {
+        conditions.push('department = ?');
+        params.push(filters.department);
+    }
+    if (filters.consultant) {
+        conditions.push('consultant = ?');
+        params.push(filters.consultant);
+    }
+    if (filters.fromDate) {
+        conditions.push('substr(created_at, 1, 10) >= ?');
+        params.push(filters.fromDate);
+    }
+    if (filters.toDate) {
+        conditions.push('substr(created_at, 1, 10) <= ?');
+        params.push(filters.toDate);
+    }
+    if (filters.fromTime) {
+        // "14:35" >= comparison against "14:35:07" already correctly includes
+        // the whole minute onward — a longer string sharing the same prefix
+        // lexically sorts after the shorter one, so no padding needed here.
+        conditions.push('registration_time >= ?');
+        params.push(filters.fromTime);
+    }
+    if (filters.toTime) {
+        // The mirror case DOES need padding: "14:35:07" <= "14:35" is false
+        // (same prefix reasoning, in reverse), which would wrongly exclude
+        // every second past :00 in the target minute. Padding to ":59" makes
+        // "up to 14:35" inclusive of the entire minute, matching fromTime's
+        // already-inclusive behavior.
+        const toTimeInclusive = filters.toTime.length === 5 ? `${filters.toTime}:59` : filters.toTime;
+        conditions.push('registration_time <= ?');
+        params.push(toTimeInclusive);
+    }
+    return { clause: conditions.length ? ` AND ${conditions.join(' AND ')}` : '', params };
+}
 function getTodayRegistrationDate() {
     const today = new Date();
     const pad = (n) => String(n).padStart(2, '0');
     return `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`;
 }
-function getDashboardStats() {
+function getDashboardStats(filters = {}) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
-    const todayStmt = db.prepare(`
-    SELECT COUNT(*) AS count FROM patients WHERE registration_date = ? AND is_deleted = 0
-  `);
-    const totalStmt = db.prepare(`
-    SELECT COUNT(*) AS count FROM patients WHERE is_deleted = 0
-  `);
-    const todayCount = todayStmt.get(getTodayRegistrationDate()).count;
-    const totalCount = totalStmt.get().count;
+    const { clause, params } = buildPatientFilterClause(filters);
+    const todayCount = db
+        .prepare(`SELECT COUNT(*) AS count FROM patients WHERE registration_date = ? AND is_deleted = 0${clause}`)
+        .get(getTodayRegistrationDate(), ...params).count;
+    const totalCount = db.prepare(`SELECT COUNT(*) AS count FROM patients WHERE is_deleted = 0${clause}`).get(...params).count;
     return { todayCount, totalCount };
 }
 // ============================================
@@ -781,7 +888,20 @@ function getDashboardStats() {
 const BACKUP_RETENTION_COUNT = 14;
 const BACKUP_FILE_PREFIX = 'opd-backup-';
 const BACKUP_FILE_SUFFIX = '.db';
+// Manual "Backup Now" snapshots are a deliberately separate lineage from
+// the daily backups above — distinct filename prefix, distinct (smaller)
+// retention count, pruned independently — so no amount of clicking the
+// button can ever shrink the daily lineage's real BACKUP_RETENTION_COUNT
+// days of disaster-recovery history. See createManualBackup() below.
+const MANUAL_BACKUP_FILE_PREFIX = 'opd-manual-';
+const MANUAL_BACKUP_RETENTION_COUNT = 5;
+// Clicks closer together than this refresh the same manual snapshot file
+// in place instead of creating a new one — guards against a burst of
+// accidental double-clicks flooding the (small) manual retention list.
+const MANUAL_BACKUP_DEBOUNCE_MS = 30000;
 let lastBackupError = null;
+let lastCustomLocationError = null;
+let lastCustomLocationSuccessAt = null;
 function getBackupDir() {
     const userDataPath = electron_1.app.getPath('userData');
     const backupDir = path_1.default.join(userDataPath, 'data', 'backups');
@@ -789,6 +909,110 @@ function getBackupDir() {
         node_fs_1.default.mkdirSync(backupDir, { recursive: true });
     }
     return backupDir;
+}
+// ============================================
+// Backup — admin-chosen additional location
+// ============================================
+//
+// Stored in app_settings (not a separate config file) so it lives
+// alongside every other piece of small app configuration, is included in
+// every backup automatically, and needs no new file or migration. This
+// location is always an ADDITION to the internal folder above, never a
+// replacement — see writeToCustomLocationIfConfigured() below.
+const BACKUP_LOCATION_SETTING_KEY = 'backup_custom_location';
+function getBackupCustomLocation() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(BACKUP_LOCATION_SETTING_KEY);
+    return row?.value || null;
+}
+// A real write-permission test, not just fs.existsSync — a network share
+// or external drive can exist but have had permissions revoked, so
+// existence alone isn't enough to trust before every backup attempt.
+function validateBackupLocation(dirPath) {
+    try {
+        if (!node_fs_1.default.existsSync(dirPath)) {
+            return { valid: false, error: `Folder not found: ${dirPath}` };
+        }
+        if (!node_fs_1.default.statSync(dirPath).isDirectory()) {
+            return { valid: false, error: `Not a folder: ${dirPath}` };
+        }
+        const testFile = path_1.default.join(dirPath, `.write-test-${Date.now()}`);
+        node_fs_1.default.writeFileSync(testFile, '');
+        node_fs_1.default.unlinkSync(testFile);
+        return { valid: true };
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return { valid: false, error: `Folder is not writable: ${message}` };
+    }
+}
+// Only persisted if the folder validates at the moment it's chosen — but
+// never cleared automatically afterward if it later becomes unreachable
+// (see writeToCustomLocationIfConfigured()): a temporarily unplugged USB
+// drive shouldn't require re-choosing the location once it's reconnected.
+// Passing null clears the setting (revert to internal-only backups).
+function setBackupCustomLocation(dirPath) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    if (dirPath === null) {
+        db.prepare('DELETE FROM app_settings WHERE key = ?').run(BACKUP_LOCATION_SETTING_KEY);
+        return { success: true };
+    }
+    const validation = validateBackupLocation(dirPath);
+    if (!validation.valid) {
+        return { success: false, error: validation.error ?? 'Folder is not usable for backups.' };
+    }
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(BACKUP_LOCATION_SETTING_KEY, dirPath, now);
+    return { success: true };
+}
+// Best-effort dual-write to the admin-chosen location, called only after
+// the internal backup above has already succeeded and been verified.
+// Never affects the outcome of that internal backup — failure here is
+// tracked separately (customLocationLastError) so it can be reported
+// without ever being confused with a real backup failure.
+function writeToCustomLocationIfConfigured(sourcePath, filename) {
+    const customDir = getBackupCustomLocation();
+    if (!customDir)
+        return;
+    const validation = validateBackupLocation(customDir);
+    if (!validation.valid) {
+        lastCustomLocationError = validation.error ?? 'Custom backup location unavailable';
+        console.error(`[Backup] Custom location unavailable: ${lastCustomLocationError}`);
+        return;
+    }
+    const destPath = path_1.default.join(customDir, filename);
+    const tmpDest = `${destPath}.tmp`;
+    try {
+        node_fs_1.default.copyFileSync(sourcePath, tmpDest);
+        if (!verifyBackup(tmpDest)) {
+            node_fs_1.default.unlinkSync(tmpDest);
+            throw new Error('Copied file failed integrity check');
+        }
+        if (node_fs_1.default.existsSync(destPath)) {
+            node_fs_1.default.unlinkSync(destPath);
+        }
+        node_fs_1.default.renameSync(tmpDest, destPath);
+        lastCustomLocationError = null;
+        lastCustomLocationSuccessAt = new Date().toISOString();
+        console.log(`[Backup] Also written to custom location: ${destPath}`);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        lastCustomLocationError = message;
+        console.error(`[Backup] Failed to write to custom location: ${message}`);
+        try {
+            if (node_fs_1.default.existsSync(tmpDest))
+                node_fs_1.default.unlinkSync(tmpDest);
+        }
+        catch {
+            // ignore
+        }
+    }
 }
 function getTodayFileStamp() {
     const today = new Date();
@@ -852,20 +1076,19 @@ function pruneOldBackups() {
     }
     return { removed, retainedCount: listBackupFiles().length };
 }
-// Creates (or overwrites) today's backup using SQLite's online backup API
-// via better-sqlite3's db.backup() — never a raw file copy of the live
-// database. Writes to a .tmp file, verifies it, and only then atomically
-// renames it into place. On any failure, the live database is untouched
-// and no invalid file is left under the final name.
-async function createBackup() {
+// Core mechanic shared by the daily backup below and the manual-snapshot
+// lineage further down: SQLite's online backup API via better-sqlite3's
+// db.backup() — never a raw file copy of the live database — writing to a
+// .tmp file, verifying it, and only then atomically renaming it into
+// place under whatever final filename the caller specifies. On any
+// failure, the live database is untouched and no invalid file is left
+// under the final name. Does not touch lastBackupError or any retention
+// list — callers own that, since the two lineages track/prune separately.
+async function performBackupToFile(finalName) {
     if (!db || !isInitialized) {
-        const error = 'Database not initialized';
-        lastBackupError = error;
-        return { success: false, error };
+        return { success: false, error: 'Database not initialized' };
     }
     const backupDir = getBackupDir();
-    const dateStamp = getTodayFileStamp();
-    const finalName = backupFileName(dateStamp);
     const finalPath = path_1.default.join(backupDir, finalName);
     const tmpPath = `${finalPath}.tmp`;
     try {
@@ -879,19 +1102,18 @@ async function createBackup() {
             }
             const error = 'Backup failed integrity check';
             console.error(`[Backup] ${error}: ${finalName}`);
-            lastBackupError = error;
             return { success: false, error };
         }
         // Windows fs.renameSync throws if the destination already exists
-        // (unlike POSIX rename). createBackup() is safely re-callable within
-        // the same day, so remove any prior same-day file first.
+        // (unlike POSIX rename). Both lineages can legitimately re-target the
+        // same filename (daily: re-run same day; manual: debounced refresh),
+        // so remove any prior file under this exact name first.
         if (node_fs_1.default.existsSync(finalPath)) {
             node_fs_1.default.unlinkSync(finalPath);
         }
         node_fs_1.default.renameSync(tmpPath, finalPath);
-        pruneOldBackups();
-        lastBackupError = null;
         console.log(`[Backup] Created and verified: ${finalName}`);
+        writeToCustomLocationIfConfigured(finalPath, finalName);
         return { success: true, file: finalName };
     }
     catch (error) {
@@ -904,9 +1126,97 @@ async function createBackup() {
         catch {
             // ignore
         }
-        lastBackupError = message;
         return { success: false, error: message };
     }
+}
+// Creates (or overwrites) today's daily backup — one file per calendar
+// day, retained for BACKUP_RETENTION_COUNT days. This is the app's real
+// disaster-recovery safety net; it is only ever called by the automatic
+// startup/shutdown triggers and the restore flow's pre-restore safety
+// snapshot — never by the manual "Backup Now" button (see
+// createManualBackup() below) — specifically so nothing a user clicks can
+// ever shrink its retention window.
+async function createBackup() {
+    const finalName = backupFileName(getTodayFileStamp());
+    const result = await performBackupToFile(finalName);
+    if (result.success) {
+        lastBackupError = null;
+        pruneOldBackups();
+    }
+    else {
+        lastBackupError = result.error ?? 'Unknown error';
+    }
+    return result;
+}
+// ============================================
+// Manual "Backup Now" snapshots — separate lineage, see constants above
+// ============================================
+function manualBackupFileName(timestamp) {
+    return `${MANUAL_BACKUP_FILE_PREFIX}${timestamp}${BACKUP_FILE_SUFFIX}`;
+}
+function getManualBackupTimestamp() {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+}
+function listManualBackupFiles() {
+    const backupDir = getBackupDir();
+    return node_fs_1.default
+        .readdirSync(backupDir)
+        .filter((f) => f.startsWith(MANUAL_BACKUP_FILE_PREFIX) && f.endsWith(BACKUP_FILE_SUFFIX))
+        .sort();
+}
+// Same oldest-first pruning as pruneOldBackups(), against the separate
+// manual retention count — never touches daily backup files.
+function pruneOldManualBackups() {
+    const files = listManualBackupFiles();
+    const excess = files.length - MANUAL_BACKUP_RETENTION_COUNT;
+    if (excess > 0) {
+        const backupDir = getBackupDir();
+        for (const f of files.slice(0, excess)) {
+            try {
+                node_fs_1.default.unlinkSync(path_1.default.join(backupDir, f));
+            }
+            catch (error) {
+                console.error(`[Backup] Failed to remove old manual snapshot ${f}:`, error instanceof Error ? error.message : String(error));
+            }
+        }
+    }
+}
+// The "Backup Now" button. Always produces a fresh, verified snapshot,
+// but debounces rapid repeated clicks: if the most recent manual snapshot
+// is younger than MANUAL_BACKUP_DEBOUNCE_MS, this refreshes that same
+// file in place (`created: false`) rather than adding a new one;
+// otherwise it creates a genuinely new, distinctly-timestamped file
+// (`created: true`). Deliberately never touches the daily opd-backup-
+// lineage or its retention — see createBackup()'s comment above.
+async function createManualBackup() {
+    const files = listManualBackupFiles();
+    const mostRecent = files[files.length - 1];
+    let targetName;
+    let created;
+    let ageMs = Infinity;
+    if (mostRecent) {
+        try {
+            ageMs = Date.now() - node_fs_1.default.statSync(path_1.default.join(getBackupDir(), mostRecent)).mtime.getTime();
+        }
+        catch {
+            // file vanished between listing and stat — treat as no recent file
+        }
+    }
+    if (mostRecent && ageMs < MANUAL_BACKUP_DEBOUNCE_MS) {
+        targetName = mostRecent;
+        created = false;
+    }
+    else {
+        targetName = manualBackupFileName(getManualBackupTimestamp());
+        created = true;
+    }
+    const result = await performBackupToFile(targetName);
+    if (result.success) {
+        pruneOldManualBackups();
+    }
+    return { ...result, created };
 }
 // Startup path: only backs up if today's backup doesn't already exist.
 async function ensureTodayBackup() {
@@ -935,13 +1245,176 @@ function getBackupStatus() {
         }
         lastBackupVerified = verifyBackup(latestPath);
     }
+    let customLocation = null;
+    try {
+        customLocation = getBackupCustomLocation();
+    }
+    catch {
+        // not initialized — shouldn't happen here, but never fatal for status display
+    }
     return {
         lastBackupAt,
         lastBackupFile: latest,
         lastBackupVerified,
         retainedCount: files.length,
         lastError: lastBackupError,
+        customLocation,
+        customLocationLastError: lastCustomLocationError,
+        customLocationLastSuccessAt: lastCustomLocationSuccessAt,
     };
+}
+// The internal, always-available backup folder — exported so main.ts's
+// "Open Backup Folder" can fall back to it without duplicating this
+// path-construction logic.
+function getDefaultBackupLocation() {
+    return getBackupDir();
+}
+// Full path to the most recent local (internal-location) backup file, or
+// null if none exists yet — used by main.ts to know what to upload.
+function getLatestBackupFilePath() {
+    const files = listBackupFiles();
+    const latest = files[files.length - 1];
+    if (!latest)
+        return null;
+    return path_1.default.join(getBackupDir(), latest);
+}
+// Resolves a filename already shown in the backup history list to its
+// full path — used by the restore flow. Deliberately does not accept an
+// arbitrary path from the caller.
+function getLocalBackupFilePath(filename) {
+    return path_1.default.join(getBackupDir(), filename);
+}
+// Overwrites the live database file with the given source file. The
+// caller (main.ts's restore flow) MUST have already verified the
+// source's integrity and called closeDatabase() — this function performs
+// no safety checks of its own by design, since that sequencing already
+// happens immediately before every call site.
+function replaceLiveDatabaseFile(sourcePath) {
+    node_fs_1.default.copyFileSync(sourcePath, getDatabasePath());
+}
+// ============================================
+// Cloud backup — device pairing credentials
+// ============================================
+//
+// Stored in app_settings, same as the backup location above. Read/write
+// stays here (database.ts already owns all SQLite access); the actual
+// HTTP calls that use these credentials live in electron/cloudBackup.ts,
+// which imports these two functions rather than touching app_settings
+// itself — keeps SQLite access centralized in this one module.
+const CLOUD_DEVICE_ID_KEY = 'cloud_device_id';
+const CLOUD_API_KEY_KEY = 'cloud_api_key';
+// Records which server address these credentials were actually issued
+// by — a device ID/API key pair is only meaningful to the one server that
+// generated it. Without this, "credentials already exist" and "credentials
+// are valid for the server I'm about to talk to" get conflated, which is
+// exactly what let a device paired against an old dev server silently
+// reuse those credentials against a freshly started LAN server that had
+// never heard of it (confirmed via testing: the LAN server's own devices
+// table was empty, causing a 401 on every authenticated call).
+const CLOUD_PAIRED_API_URL_KEY = 'cloud_paired_api_url';
+function getDeviceCredentials() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const deviceIdRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(CLOUD_DEVICE_ID_KEY);
+    const apiKeyRow = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(CLOUD_API_KEY_KEY);
+    if (!deviceIdRow || !apiKeyRow)
+        return null;
+    return { deviceId: deviceIdRow.value, apiKey: apiKeyRow.value };
+}
+// The server address these currently-stored credentials were paired
+// against — null if never recorded (e.g. credentials predate this field)
+// or never paired at all. Compared against the currently-configured
+// address by ensurePaired() to decide whether cached credentials are
+// still usable.
+function getPairedApiUrl() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(CLOUD_PAIRED_API_URL_KEY);
+    return row ? row.value : null;
+}
+function setDeviceCredentials(deviceId, apiKey, pairedApiUrl) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const now = new Date().toISOString();
+    const upsert = db.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`);
+    upsert.run(CLOUD_DEVICE_ID_KEY, deviceId, now);
+    upsert.run(CLOUD_API_KEY_KEY, apiKey, now);
+    upsert.run(CLOUD_PAIRED_API_URL_KEY, pairedApiUrl, now);
+}
+// Forgets only this device's pairing identity — used when the configured
+// server address no longer matches who these credentials were issued by,
+// so the next ensurePaired() call re-pairs from scratch instead of
+// sending credentials the new server has never seen. Deliberately narrow:
+// touches only the three cloud_* keys above, never patient data, sync
+// cursors/timestamps, or backup settings.
+function clearDeviceCredentials() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const del = db.prepare('DELETE FROM app_settings WHERE key = ?');
+    del.run(CLOUD_DEVICE_ID_KEY);
+    del.run(CLOUD_API_KEY_KEY);
+    del.run(CLOUD_PAIRED_API_URL_KEY);
+}
+// ============================================
+// LAN Sync Server — Admin-managed child process settings
+// ============================================
+//
+// This machine's own preferences for running the LAN server, so the Admin
+// app can restore them (auto-start, same port, same identity) on every
+// launch without asking again. The setup token here is auto-generated by
+// this app the first time LAN Sync is enabled — never typed by a person,
+// never shown in any screen — and exists only to let THIS Admin app self-
+// pair with the server it just started; every other device pairs via a
+// short-lived pairing code instead (see electron/lanServer.ts), never this
+// value.
+const LAN_SERVER_ENABLED_KEY = 'lan_server_enabled';
+const LAN_SERVER_PORT_KEY = 'lan_server_port';
+const LAN_SERVER_SETUP_TOKEN_KEY = 'lan_server_setup_token';
+function setAppSettingValue(key, value) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(key, value, now);
+}
+function getAppSettingValue(key) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
+    return row?.value ?? null;
+}
+function getLanServerEnabled() {
+    return getAppSettingValue(LAN_SERVER_ENABLED_KEY) === '1';
+}
+function setLanServerEnabled(enabled) {
+    setAppSettingValue(LAN_SERVER_ENABLED_KEY, enabled ? '1' : '0');
+}
+function getLanServerPort() {
+    const raw = getAppSettingValue(LAN_SERVER_PORT_KEY);
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : 4000;
+}
+function setLanServerPort(port) {
+    setAppSettingValue(LAN_SERVER_PORT_KEY, String(port));
+}
+// Generated once (first Enable), reused after that — regenerating it on
+// every start would be harmless for already-paired devices (their own
+// credentials don't depend on it) but would needlessly invalidate the
+// dev/manual setupToken fallback path for this install.
+function getOrCreateLanServerSetupToken() {
+    const existing = getAppSettingValue(LAN_SERVER_SETUP_TOKEN_KEY);
+    if (existing)
+        return existing;
+    const generated = node_crypto_1.default.randomBytes(24).toString('hex');
+    setAppSettingValue(LAN_SERVER_SETUP_TOKEN_KEY, generated);
+    return generated;
 }
 function getReturningPatientAddress(patientName) {
     if (!db || !isInitialized) {
@@ -959,122 +1432,229 @@ function getReturningPatientAddress(patientName) {
 // All counts are all-time (never "today") — the Employee Dashboard already
 // owns the daily-count concept via getDashboardStats(); this is
 // deliberately the total/overall view instead.
-function getAdminAnalytics() {
+//
+// totalDepartmentsActive/totalConsultantsActive are deliberately NEVER
+// filtered — they're master-data counts (how many departments/consultants
+// exist and are active), not registration-derived stats, so a Gender or
+// Consultant filter has no meaningful effect on them. Every other field
+// here reflects the filtered subset of registrations.
+function getAdminAnalytics(filters = {}) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
-    const totalRegistrations = db.prepare('SELECT COUNT(*) AS count FROM patients WHERE is_deleted = 0').get().count;
-    const totalDiagnosesActive = db.prepare('SELECT COUNT(*) AS count FROM diagnoses WHERE active = 1').get().count;
+    const { clause, params } = buildPatientFilterClause(filters);
+    const totalRegistrations = db.prepare(`SELECT COUNT(*) AS count FROM patients WHERE is_deleted = 0${clause}`).get(...params).count;
+    const totalDepartmentsActive = db.prepare('SELECT COUNT(*) AS count FROM departments WHERE active = 1').get().count;
     const totalConsultantsActive = db.prepare('SELECT COUNT(*) AS count FROM consultants WHERE active = 1').get().count;
     const genderCounts = db
         .prepare(`SELECT gender AS label, COUNT(*) AS count FROM patients
-         WHERE is_deleted = 0 GROUP BY gender ORDER BY count DESC`)
-        .all();
+       WHERE is_deleted = 0${clause} GROUP BY gender ORDER BY count DESC`)
+        .all(...params);
     const consultantCounts = db
         .prepare(`SELECT consultant AS label, COUNT(*) AS count FROM patients
-         WHERE is_deleted = 0 GROUP BY consultant ORDER BY count DESC`)
-        .all();
-    const diagnosisCounts = db
-        .prepare(`SELECT diagnosis AS label, COUNT(*) AS count FROM patients
-         WHERE is_deleted = 0 GROUP BY diagnosis ORDER BY count DESC LIMIT 10`)
-        .all();
+       WHERE is_deleted = 0${clause} GROUP BY consultant ORDER BY count DESC`)
+        .all(...params);
+    // Excludes patients with no department on record (pre-migration rows, or
+    // any row created before a department was ever selected) — a "blank"
+    // bucket wouldn't be a meaningful department for this chart.
+    const departmentCounts = db
+        .prepare(`SELECT department AS label, COUNT(*) AS count FROM patients
+       WHERE is_deleted = 0 AND department IS NOT NULL AND department != ''${clause}
+       GROUP BY department ORDER BY count DESC`)
+        .all(...params);
     // Keyed off created_at (ISO, e.g. "2026-08-18T10:23:45.123Z") rather than
     // registration_date (DD/MM/YYYY text, not sortable/parseable in SQLite).
     const dailyCounts = db
         .prepare(`SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS count
-         FROM patients
-         WHERE is_deleted = 0 AND created_at >= datetime('now', '-30 days')
-         GROUP BY date
-         ORDER BY date ASC`)
-        .all();
+       FROM patients
+       WHERE is_deleted = 0 AND created_at >= datetime('now', '-30 days')${clause}
+       GROUP BY date
+       ORDER BY date ASC`)
+        .all(...params);
     return {
         totalRegistrations,
-        totalDiagnosesActive,
+        totalDepartmentsActive,
         totalConsultantsActive,
         genderCounts,
         consultantCounts,
-        diagnosisCounts,
+        departmentCounts,
         dailyCounts,
     };
 }
+// ============================================
+// Admin — CSV export
+// ============================================
 function csvEscape(value) {
     const s = value === null || value === undefined ? '' : String(value);
     return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
-function exportPatientsCsv(filters) {
+// Excel auto-detects a long all-digit CSV cell (Aadhaar/mobile numbers) as
+// a number and renders it in scientific notation (e.g. 1.23457E+11) —
+// display corruption only, the underlying database value is untouched.
+// The standard fix Excel recognizes is a cell written as a formula that
+// evaluates to a text string — ="123456789012" — which Excel displays and
+// stores as that literal text, never as a number. Deliberately NOT run
+// through csvEscape(): its quotes are load-bearing formula syntax, not
+// CSV-escapable content, and Aadhaar/mobile values never contain a comma
+// or newline that would need CSV-level quoting anyway.
+function excelTextCell(value) {
+    if (value === null || value === undefined || value === '')
+        return '';
+    return `="${value.replace(/"/g, '""')}"`;
+}
+// The single source of rows for both the Reports preview and the CSV
+// export below — getReportPreviewRows() and exportPatientsCsv() both call
+// this with the exact same filters object, so what the preview shows and
+// what the CSV contains can never drift apart. Includes aadhaar_number/
+// mobile_number (per explicit customer requirement) even though this is a
+// bulk/list-shaped view — unlike the printed slip and the plain patient
+// search list, which deliberately still exclude them.
+function getFilteredPatientRows(filters) {
     if (!db || !isInitialized) {
         throw new Error('Database not initialized');
     }
-    const conditions = ['is_deleted = 0'];
-    const params = [];
-    if (filters.fromDate) {
-        conditions.push('substr(created_at, 1, 10) >= ?');
-        params.push(filters.fromDate);
-    }
-    if (filters.toDate) {
-        conditions.push('substr(created_at, 1, 10) <= ?');
-        params.push(filters.toDate);
-    }
-    if (filters.gender) {
-        conditions.push('gender = ?');
-        params.push(filters.gender);
-    }
-    if (filters.consultant) {
-        conditions.push('consultant = ?');
-        params.push(filters.consultant);
-    }
-    if (filters.diagnosis) {
-        conditions.push('diagnosis = ?');
-        params.push(filters.diagnosis);
-    }
-    const rows = db
-        .prepare(`SELECT opd_no, registration_date, patient_name, age_years, age_months, gender, address,
-              diagnosis, diagnosis_other, consultant, employee_id, created_at
+    const { clause, params } = buildPatientFilterClause(filters);
+    return db
+        .prepare(`SELECT opd_no, registration_date, registration_time, patient_name, age_years, age_months, gender, address,
+              aadhaar_number, mobile_number, department, consultant, employee_id, created_at
        FROM patients
-       WHERE ${conditions.join(' AND ')}
+       WHERE is_deleted = 0${clause}
        ORDER BY created_at ASC`)
         .all(...params);
+}
+// Renderer-facing: same rows the CSV export below writes to disk, for the
+// Admin Reports preview table.
+function getReportPreviewRows(filters) {
+    return getFilteredPatientRows(filters);
+}
+const PATIENT_EXPORT_HEADERS = [
+    'C.R. No.',
+    'Registration Date',
+    'Registration Time',
+    'Patient Name',
+    'Age (Years)',
+    'Age (Months)',
+    'Gender',
+    'Aadhaar Number',
+    'Mobile Number',
+    'Department',
+    'Consultant',
+    'Registered By',
+    'Created At',
+];
+function patientExportRowToLine(r) {
+    return [
+        csvEscape(r.opd_no),
+        csvEscape(r.registration_date),
+        csvEscape(r.registration_time),
+        csvEscape(r.patient_name),
+        csvEscape(r.age_years),
+        csvEscape(r.age_months),
+        csvEscape(r.gender),
+        excelTextCell(r.aadhaar_number),
+        excelTextCell(r.mobile_number),
+        csvEscape(r.department),
+        csvEscape(r.consultant),
+        csvEscape(r.employee_id),
+        csvEscape(r.created_at),
+    ].join(',');
+}
+function exportPatientsCsv(filters) {
+    const rows = getFilteredPatientRows(filters);
+    const lines = [PATIENT_EXPORT_HEADERS.join(','), ...rows.map(patientExportRowToLine)];
+    return lines.join('\r\n');
+}
+// ============================================
+// Admin — Consultants CSV export
+// ============================================
+//
+// The Consultants screen has no search/filter — it always shows the full
+// list — so this exports exactly that list, in the same order shown on
+// screen (sort_order), with the same two columns the table displays.
+function exportConsultantsCsv() {
+    const items = (0, exports.listConsultantsAdmin)();
+    const lines = [
+        'Name,Status',
+        ...items.map((c) => [c.name, c.active ? 'Active' : 'Inactive'].map(csvEscape).join(',')),
+    ];
+    return lines.join('\r\n');
+}
+// ============================================
+// Admin — Patients list CSV export
+// ============================================
+//
+// Mirrors searchPatients()'s own WHERE clause exactly (same name/OPD/date/
+// deleted conditions) so the export always matches what's currently
+// filtered on the Admin Patients screen — just without that query's
+// LIMIT 50 display cap, since a display cap isn't a deliberate exclusion
+// filter the way the search text/date/deleted-toggle are. Includes
+// Aadhaar/Mobile (per explicit customer requirement) even though the
+// on-screen table itself doesn't show those columns — same as
+// exportPatientsCsv above.
+function exportPatientsListCsv(query, registrationDate, includeDeleted = false) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const conditions = ['(patient_name LIKE ? OR opd_no LIKE ?)'];
+    const params = [`%${query}%`, `%${query}%`];
+    if (!includeDeleted) {
+        conditions.push('is_deleted = 0');
+    }
+    if (registrationDate) {
+        conditions.push('registration_date = ?');
+        params.push(registrationDate);
+    }
+    const rows = db
+        .prepare(`SELECT opd_no, patient_name, age_years, age_months, gender, aadhaar_number, mobile_number, department,
+              registration_date, registration_time, consultant, is_deleted
+       FROM patients
+       WHERE ${conditions.join(' AND ')}
+       ORDER BY registration_date DESC`)
+        .all(...params);
     const headers = [
-        'OPD No.',
-        'Registration Date',
+        'C.R. No.',
         'Patient Name',
         'Age (Years)',
         'Age (Months)',
         'Gender',
-        'Address',
-        'Diagnosis',
-        'Diagnosis (Other)',
+        'Aadhaar Number',
+        'Mobile Number',
+        'Department',
+        'Registration Date',
+        'Registration Time',
         'Consultant',
-        'Registered By',
-        'Created At',
+        'Status',
     ];
     const lines = [headers.join(',')];
     for (const r of rows) {
         lines.push([
-            r.opd_no,
-            r.registration_date,
-            r.patient_name,
-            r.age_years,
-            r.age_months,
-            r.gender,
-            r.address,
-            r.diagnosis,
-            r.diagnosis_other,
-            r.consultant,
-            r.employee_id,
-            r.created_at,
-        ]
-            .map(csvEscape)
-            .join(','));
+            csvEscape(r.opd_no),
+            csvEscape(r.patient_name),
+            csvEscape(r.age_years),
+            csvEscape(r.age_months),
+            csvEscape(r.gender),
+            excelTextCell(r.aadhaar_number),
+            excelTextCell(r.mobile_number),
+            csvEscape(r.department),
+            csvEscape(r.registration_date),
+            csvEscape(r.registration_time),
+            csvEscape(r.consultant),
+            csvEscape(r.is_deleted ? 'Deleted' : 'Active'),
+        ].join(','));
     }
     return lines.join('\r\n');
 }
 // Newest first. Reuses the same file-listing/verification primitives as
 // getBackupStatus(), just returning every retained file instead of only
 // the latest.
+// Combines both lineages (daily + manual) into one history list. Sorted
+// by actual modification time, not filename — the two prefixes
+// ("opd-backup-" vs "opd-manual-") don't sort correctly against each
+// other lexically, unlike either lineage sorted against itself.
 function listBackups() {
     const backupDir = getBackupDir();
-    return listBackupFiles()
+    const allFiles = [...listBackupFiles(), ...listManualBackupFiles()];
+    return allFiles
         .map((f) => {
         const filePath = path_1.default.join(backupDir, f);
         const stat = node_fs_1.default.statSync(filePath);
@@ -1085,5 +1665,178 @@ function listBackups() {
             verified: verifyBackup(filePath),
         };
     })
-        .reverse();
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+// ============================================
+// Data Sync — structured operational data (patient records), distinct
+// from Backup above (whole-database snapshot files). See electron/sync.ts
+// for the HTTP push/pull that consumes these functions, and the
+// architecture report for the full Backup-vs-Sync distinction.
+//
+// `patients.synced` / `last_synced_at` / `sync_error` (already present in
+// the schema, previously unused) are sufficient for this design without an
+// outbox/change-log table: registerPatient() already sets synced = 0 on
+// every insert, and updatePatient()/softDeletePatient()/restorePatient()
+// above now do the same on every write. A row's current `synced` value is
+// therefore always exactly "does the server have my latest state" — no
+// history of intermediate changes needs to be retained, because Reception
+// only ever creates/soft-deletes and Admin only ever edits/restores the
+// SAME row, never two different in-flight versions of it at once.
+// ============================================
+function getAppSetting(key) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key);
+    return row?.value ?? null;
+}
+function setAppSetting(key, value) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(key, value, now);
+}
+function clearAppSetting(key) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    db.prepare('DELETE FROM app_settings WHERE key = ?').run(key);
+}
+// Oldest-first, bounded — electron/sync.ts pushes in bounded batches (not
+// the whole backlog in one request) so one very large first-ever sync
+// can't become one unbounded request.
+function getUnsyncedPatients(limit) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    return db.prepare('SELECT * FROM patients WHERE synced = 0 ORDER BY id ASC LIMIT ?').all(limit);
+}
+function getSyncPendingCount() {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    return db.prepare('SELECT COUNT(*) AS count FROM patients WHERE synced = 0').get().count;
+}
+// Called only after the server has actually acknowledged storing these
+// rows (see electron/sync.ts's pushPendingPatients()) — never optimistically
+// beforehand, so an interrupted push always leaves the affected rows
+// exactly where the next push will find and retry them.
+function markPatientsSynced(ids) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    if (ids.length === 0)
+        return;
+    const now = new Date().toISOString();
+    const stmt = db.prepare('UPDATE patients SET synced = 1, last_synced_at = ?, sync_error = NULL WHERE id = ?');
+    const run = db.transaction((rows) => {
+        for (const id of rows)
+            stmt.run(now, id);
+    });
+    run(ids);
+}
+// Leaves synced = 0 (so the row is retried on the next push) but records
+// why the last attempt was rejected, for the sync status UI.
+function markPatientsSyncFailed(ids, error) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    if (ids.length === 0)
+        return;
+    const stmt = db.prepare('UPDATE patients SET sync_error = ? WHERE id = ?');
+    const run = db.transaction((rows) => {
+        for (const id of rows)
+            stmt.run(error, id);
+    });
+    run(ids);
+}
+// Applies one row pulled from the central server to the local database,
+// keyed by opd_no (never id — ids are per-device, opd_no is the one value
+// shared across every device's copy of the same patient). Returns which
+// of three things happened, purely for pull-summary logging.
+//
+// A local row with synced = 0 (an edit/soft-delete/restore made here that
+// the server hasn't confirmed yet) is deliberately left untouched — an
+// incoming pull must never silently discard a pending local change that's
+// simply waiting for its own push to go out. The next push carries that
+// change to the server; the pull after that is then a genuine no-op here.
+function upsertSyncedPatientFromServer(row) {
+    if (!db || !isInitialized) {
+        throw new Error('Database not initialized');
+    }
+    const existing = db.prepare('SELECT id, synced, updated_at FROM patients WHERE opd_no = ?').get(row.opd_no);
+    if (!existing) {
+        const now = new Date().toISOString();
+        db.prepare(`INSERT INTO patients (
+        opd_no, registration_date, registration_time, patient_name, age_years, age_months,
+        gender, address, aadhaar_number, mobile_number, diagnosis,
+        diagnosis_other, department, consultant, employee_id,
+        created_at, updated_at, is_deleted, synced, last_synced_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', NULL, ?, ?, ?, ?, ?, ?, 1, ?)`).run(row.opd_no, row.registration_date, row.registration_time, row.patient_name, row.age_years, row.age_months, row.gender, row.address, row.aadhaar_number, row.mobile_number, row.department, row.consultant, row.employee_id, row.created_at, row.updated_at, row.is_deleted, now);
+        return 'inserted';
+    }
+    if (existing.synced === 0) {
+        return 'skipped';
+    }
+    // ISO timestamps (toISOString()) compare correctly as plain strings —
+    // fixed-width, zero-padded, always UTC — matching the same comparison
+    // the server performs in routes/sync.ts.
+    if (row.updated_at <= existing.updated_at) {
+        return 'skipped';
+    }
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE patients SET
+       registration_date = ?, registration_time = ?, patient_name = ?, age_years = ?, age_months = ?,
+       gender = ?, address = ?, aadhaar_number = ?, mobile_number = ?,
+       department = ?, consultant = ?, is_deleted = ?,
+       updated_at = ?, synced = 1, last_synced_at = ?, sync_error = NULL
+     WHERE id = ?`).run(row.registration_date, row.registration_time, row.patient_name, row.age_years, row.age_months, row.gender, row.address, row.aadhaar_number, row.mobile_number, row.department, row.consultant, row.is_deleted, row.updated_at, now, existing.id);
+    return 'updated';
+}
+const SYNC_PULL_CURSOR_KEY = 'sync_pull_cursor';
+const SYNC_LAST_PUSH_AT_KEY = 'sync_last_push_at';
+const SYNC_LAST_PUSH_ERROR_KEY = 'sync_last_push_error';
+const SYNC_LAST_PULL_AT_KEY = 'sync_last_pull_at';
+const SYNC_LAST_PULL_ERROR_KEY = 'sync_last_pull_error';
+const SYNC_LAST_PULL_COUNT_KEY = 'sync_last_pull_count';
+// Persisted (not just in-memory) so "last successful sync" survives an app
+// restart — unlike the cloud-backup status cache, this is explicitly
+// required: see the architecture report's restart-safety requirement.
+function getSyncCursor() {
+    return getAppSetting(SYNC_PULL_CURSOR_KEY);
+}
+function setSyncCursor(iso) {
+    setAppSetting(SYNC_PULL_CURSOR_KEY, iso);
+}
+function recordSyncPushResult(success, error) {
+    if (success) {
+        setAppSetting(SYNC_LAST_PUSH_AT_KEY, new Date().toISOString());
+        clearAppSetting(SYNC_LAST_PUSH_ERROR_KEY);
+    }
+    else if (error) {
+        setAppSetting(SYNC_LAST_PUSH_ERROR_KEY, error);
+    }
+}
+function recordSyncPullResult(success, count, error) {
+    if (success) {
+        setAppSetting(SYNC_LAST_PULL_AT_KEY, new Date().toISOString());
+        setAppSetting(SYNC_LAST_PULL_COUNT_KEY, String(count ?? 0));
+        clearAppSetting(SYNC_LAST_PULL_ERROR_KEY);
+    }
+    else if (error) {
+        setAppSetting(SYNC_LAST_PULL_ERROR_KEY, error);
+    }
+}
+function getSyncStatus() {
+    const pullCountRaw = getAppSetting(SYNC_LAST_PULL_COUNT_KEY);
+    return {
+        lastPushAt: getAppSetting(SYNC_LAST_PUSH_AT_KEY),
+        lastPushError: getAppSetting(SYNC_LAST_PUSH_ERROR_KEY),
+        pendingPushCount: getSyncPendingCount(),
+        lastPullAt: getAppSetting(SYNC_LAST_PULL_AT_KEY),
+        lastPullError: getAppSetting(SYNC_LAST_PULL_ERROR_KEY),
+        lastPullCount: pullCountRaw === null ? null : Number(pullCountRaw),
+    };
 }

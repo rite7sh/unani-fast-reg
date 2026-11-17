@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useState, type FormEvent } from "react";
 
-// Same list/add/rename/activate pattern as AdminDiagnosesScreen.tsx and
-// AdminConsultantsScreen.tsx, plus a Consultants mapping section per row —
-// this is the department-side half of the Diagnosis → Department →
-// Consultant chain (the diagnosis-side half lives on AdminDiagnosesScreen).
+// Same list/add/rename/activate pattern as AdminConsultantsScreen.tsx,
+// plus a Consultants mapping section per row — Department is the top-level
+// entity in the Department → Consultant dependency (Diagnosis was removed
+// as a concept; this screen used to be one half of a three-level chain).
 export default function AdminDepartmentsScreen() {
   const [items, setItems] = useState<MasterDataItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,8 +128,7 @@ export default function AdminDepartmentsScreen() {
       <p className="hint">
         Deactivated departments no longer appear in Registration, but existing patient records that used them are
         unaffected — department text is saved on the record at registration time, not linked live to this list.
-        Which diagnoses route to a department is managed on the Diagnoses screen; which consultants belong to a
-        department is managed here.
+        Which consultants belong to a department is managed here.
       </p>
 
       <form className="master-add-form" onSubmit={submitAdd}>

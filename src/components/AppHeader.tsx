@@ -14,6 +14,7 @@ export default function AppHeader({
   return (
     <header className="appbar">
       <div className="appbar-left">
+        <img src="./unani-logo.png" alt="" className="appbar-logo" />
         <strong className="appbar-title">Unani Hospital</strong>
         <span className="appbar-pipe" aria-hidden="true">
           |

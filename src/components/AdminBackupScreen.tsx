@@ -18,6 +18,10 @@ export default function AdminBackupScreen() {
   const [notice, setNotice] = useState<string | null>(null);
   const [isBackingUp, setIsBackingUp] = useState(false);
 
+  const [confirmingRestore, setConfirmingRestore] = useState<string | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+
   function load() {
     window.electron.db
       .getBackupStatus()
@@ -41,7 +45,11 @@ export default function AdminBackupScreen() {
     try {
       const result = await window.electron.admin.createBackupNow();
       if (result.success) {
-        setNotice(`Backup created: ${result.file}`);
+        setNotice(
+          result.created === false
+            ? `Refreshed recent snapshot: ${result.file} (clicked again within 30s) — see Backup History below.`
+            : `Backup created successfully: ${result.file} — see Backup History below.`
+        );
         load();
       } else {
         setError(`Backup failed: ${result.error}`);
@@ -51,6 +59,29 @@ export default function AdminBackupScreen() {
       setError(`Backup failed: ${message}`);
     } finally {
       setIsBackingUp(false);
+    }
+  }
+
+  // On success the app relaunches itself (electron/main.ts's
+  // admin:restoreBackup handler) — this promise then never resolves, so
+  // isRestoring is deliberately left true rather than reset in a
+  // finally{}, keeping the row showing "Restoring..." until the app
+  // actually restarts. Only the failure path resets state.
+  async function confirmRestore(filename: string) {
+    setIsRestoring(true);
+    setRestoreError(null);
+    try {
+      const result = await window.electron.admin.restoreBackup({ type: "local", filename });
+      if (!result.success) {
+        setRestoreError(`Restore failed: ${result.error}`);
+        setIsRestoring(false);
+        setConfirmingRestore(null);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setRestoreError(`Restore failed: ${message}`);
+      setIsRestoring(false);
+      setConfirmingRestore(null);
     }
   }
 
@@ -89,6 +120,9 @@ export default function AdminBackupScreen() {
       <h2 className="panel-title" style={{ marginTop: 24 }}>
         Backup History
       </h2>
+
+      {restoreError && <p className="err">{restoreError}</p>}
+
       {history.length === 0 ? (
         <p className="empty-note">No backups yet.</p>
       ) : (
@@ -99,6 +133,7 @@ export default function AdminBackupScreen() {
               <th>Created</th>
               <th>Size</th>
               <th>Verified</th>
+              <th className="actions-cell">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -112,6 +147,33 @@ export default function AdminBackupScreen() {
                     {b.verified ? "Verified" : "Issue"}
                   </span>
                 </td>
+                <td className="actions-cell">
+                  {isRestoring && confirmingRestore === b.file ? (
+                    <span className="meta-line dim">Restoring — app will restart...</span>
+                  ) : confirmingRestore === b.file ? (
+                    <div className="table-actions">
+                      <span className="meta-line dim">Restore this backup?</span>
+                      <button className="btn-secondary sm" onClick={() => setConfirmingRestore(null)}>
+                        Cancel
+                      </button>
+                      <button className="btn-primary sm" onClick={() => confirmRestore(b.file)}>
+                        Confirm Restore
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="btn-secondary sm"
+                      onClick={() => {
+                        setRestoreError(null);
+                        setConfirmingRestore(b.file);
+                      }}
+                      disabled={!b.verified || isRestoring}
+                      title={!b.verified ? "This backup failed its integrity check and cannot be restored" : undefined}
+                    >
+                      Restore
+                    </button>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -119,9 +181,9 @@ export default function AdminBackupScreen() {
       )}
 
       <p className="hint" style={{ marginTop: 16 }}>
-        Restore-from-backup is planned for a future update — it needs a safe way to swap the live database file
-        without risking data loss mid-operation, so it isn't available yet. Contact support if you need a backup
-        restored in the meantime.
+        Restoring replaces the current database with the selected backup. The application takes a fresh safety
+        snapshot of what's currently on this computer first, then restarts automatically — nothing is discarded
+        without a way back.
       </p>
     </section>
   );

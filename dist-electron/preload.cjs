@@ -30,17 +30,13 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         updatePatient: async (id, updates) => {
             return electron_1.ipcRenderer.invoke('db:updatePatient', id, updates);
         },
-        softDeletePatient: async (id) => {
-            return electron_1.ipcRenderer.invoke('db:softDeletePatient', id);
-        },
-        getDiagnoses: async () => {
-            return electron_1.ipcRenderer.invoke('db:getDiagnoses');
-        },
+        // No softDeletePatient here — deliberate; see main.ts's comment above
+        // the (removed) db:softDeletePatient handler for why.
         getConsultants: async () => {
             return electron_1.ipcRenderer.invoke('db:getConsultants');
         },
-        getDepartmentsForDiagnosis: async (diagnosisName) => {
-            return electron_1.ipcRenderer.invoke('db:getDepartmentsForDiagnosis', diagnosisName);
+        getDepartments: async () => {
+            return electron_1.ipcRenderer.invoke('db:getDepartments');
         },
         getConsultantsForDepartment: async (departmentName) => {
             return electron_1.ipcRenderer.invoke('db:getConsultantsForDepartment', departmentName);
@@ -48,8 +44,8 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         getReturningPatientAddress: async (patientName) => {
             return electron_1.ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
         },
-        getDashboardStats: async () => {
-            return electron_1.ipcRenderer.invoke('db:getDashboardStats');
+        getDashboardStats: async (filters) => {
+            return electron_1.ipcRenderer.invoke('db:getDashboardStats', filters);
         },
         previewNextOpdNumber: async () => {
             return electron_1.ipcRenderer.invoke('db:previewNextOpdNumber');
@@ -77,17 +73,8 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         changePassword: async (currentPassword, newPassword) => {
             return electron_1.ipcRenderer.invoke('admin:changePassword', currentPassword, newPassword);
         },
-        listDiagnoses: async () => {
-            return electron_1.ipcRenderer.invoke('admin:listDiagnoses');
-        },
-        addDiagnosis: async (name) => {
-            return electron_1.ipcRenderer.invoke('admin:addDiagnosis', name);
-        },
-        updateDiagnosis: async (id, name) => {
-            return electron_1.ipcRenderer.invoke('admin:updateDiagnosis', id, name);
-        },
-        setDiagnosisActive: async (id, active) => {
-            return electron_1.ipcRenderer.invoke('admin:setDiagnosisActive', id, active);
+        recoverPassword: async (recoveryCode, newPassword) => {
+            return electron_1.ipcRenderer.invoke('admin:recoverPassword', recoveryCode, newPassword);
         },
         listConsultants: async () => {
             return electron_1.ipcRenderer.invoke('admin:listConsultants');
@@ -113,20 +100,14 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         setDepartmentActive: async (id, active) => {
             return electron_1.ipcRenderer.invoke('admin:setDepartmentActive', id, active);
         },
-        getDiagnosisDepartments: async (diagnosisId) => {
-            return electron_1.ipcRenderer.invoke('admin:getDiagnosisDepartments', diagnosisId);
-        },
-        setDiagnosisDepartments: async (diagnosisId, departmentIds) => {
-            return electron_1.ipcRenderer.invoke('admin:setDiagnosisDepartments', diagnosisId, departmentIds);
-        },
         getDepartmentConsultants: async (departmentId) => {
             return electron_1.ipcRenderer.invoke('admin:getDepartmentConsultants', departmentId);
         },
         setDepartmentConsultants: async (departmentId, consultantIds) => {
             return electron_1.ipcRenderer.invoke('admin:setDepartmentConsultants', departmentId, consultantIds);
         },
-        getAnalytics: async () => {
-            return electron_1.ipcRenderer.invoke('admin:getAnalytics');
+        getAnalytics: async (filters) => {
+            return electron_1.ipcRenderer.invoke('admin:getAnalytics', filters);
         },
         getPatient: async (id) => {
             return electron_1.ipcRenderer.invoke('admin:getPatient', id);
@@ -137,11 +118,81 @@ electron_1.contextBridge.exposeInMainWorld('electron', {
         exportCsv: async (filters) => {
             return electron_1.ipcRenderer.invoke('admin:exportCsv', filters);
         },
+        getReportPreview: async (filters) => {
+            return electron_1.ipcRenderer.invoke('admin:getReportPreview', filters);
+        },
+        exportConsultantsCsv: async () => {
+            return electron_1.ipcRenderer.invoke('admin:exportConsultantsCsv');
+        },
+        exportPatientsListCsv: async (query, registrationDate, includeDeleted) => {
+            return electron_1.ipcRenderer.invoke('admin:exportPatientsListCsv', query, registrationDate, includeDeleted);
+        },
         createBackupNow: async () => {
             return electron_1.ipcRenderer.invoke('admin:createBackupNow');
         },
         listBackups: async () => {
             return electron_1.ipcRenderer.invoke('admin:listBackups');
+        },
+        getBackupLocation: async () => {
+            return electron_1.ipcRenderer.invoke('admin:getBackupLocation');
+        },
+        chooseBackupLocation: async () => {
+            return electron_1.ipcRenderer.invoke('admin:chooseBackupLocation');
+        },
+        clearBackupLocation: async () => {
+            return electron_1.ipcRenderer.invoke('admin:clearBackupLocation');
+        },
+        openBackupFolder: async () => {
+            return electron_1.ipcRenderer.invoke('admin:openBackupFolder');
+        },
+        getCloudBackupStatus: async () => {
+            return electron_1.ipcRenderer.invoke('admin:getCloudBackupStatus');
+        },
+        listCloudBackups: async () => {
+            return electron_1.ipcRenderer.invoke('admin:listCloudBackups');
+        },
+        uploadBackupNow: async () => {
+            return electron_1.ipcRenderer.invoke('admin:uploadBackupNow');
+        },
+        restoreBackup: async (source) => {
+            return electron_1.ipcRenderer.invoke('admin:restoreBackup', source);
+        },
+        getLanServerStatus: async () => {
+            return electron_1.ipcRenderer.invoke('admin:getLanServerStatus');
+        },
+        startLanServer: async () => {
+            return electron_1.ipcRenderer.invoke('admin:startLanServer');
+        },
+        stopLanServer: async () => {
+            return electron_1.ipcRenderer.invoke('admin:stopLanServer');
+        },
+        restartLanServer: async () => {
+            return electron_1.ipcRenderer.invoke('admin:restartLanServer');
+        },
+        getLanAddresses: async () => {
+            return electron_1.ipcRenderer.invoke('admin:getLanAddresses');
+        },
+        generateLanPairingCode: async () => {
+            return electron_1.ipcRenderer.invoke('admin:generateLanPairingCode');
+        },
+        setLanServerPort: async (port) => {
+            return electron_1.ipcRenderer.invoke('admin:setLanServerPort', port);
+        },
+    },
+    // Data Sync API — deliberately separate from `admin` above: Reception's
+    // own "Sync Now" action uses this too, not just Admin's. Sends/receives
+    // structured patient records to/from the central server; never touches a
+    // backup file (see the `admin.createBackupNow`/`admin.uploadBackupNow`
+    // pair above for that, entirely separate functionality).
+    sync: {
+        syncNow: async () => {
+            return electron_1.ipcRenderer.invoke('sync:syncNow');
+        },
+        getStatus: async () => {
+            return electron_1.ipcRenderer.invoke('sync:getStatus');
+        },
+        connectToHospitalServer: async (address, pairingCode) => {
+            return electron_1.ipcRenderer.invoke('sync:connectToHospitalServer', address, pairingCode);
         },
     },
     // IPC for future use (add specific methods as needed)

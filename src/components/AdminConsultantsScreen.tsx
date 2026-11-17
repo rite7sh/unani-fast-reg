@@ -11,6 +11,31 @@ export default function AdminConsultantsScreen() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
 
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  async function exportCsv() {
+    setIsExporting(true);
+    setExportNotice(null);
+    setExportError(null);
+    try {
+      const result = await window.electron.admin.exportConsultantsCsv();
+      if (result.canceled) {
+        setExportNotice("Export canceled.");
+      } else if (result.success) {
+        setExportNotice(`Exported to ${result.filePath}`);
+      } else {
+        setExportError("Export failed.");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setExportError(`Export failed: ${message}`);
+    } finally {
+      setIsExporting(false);
+    }
+  }
+
   function load() {
     setLoading(true);
     setError(null);
@@ -72,12 +97,20 @@ export default function AdminConsultantsScreen() {
 
   return (
     <section className="panel">
-      <h2 className="panel-title">Consultants</h2>
+      <div className="panel-title-row">
+        <h2 className="panel-title no-border">Consultants</h2>
+        <button className="btn-secondary" onClick={exportCsv} disabled={isExporting || loading}>
+          {isExporting ? "Exporting..." : "Export CSV"}
+        </button>
+      </div>
       <p className="hint">
         Deactivated consultants no longer appear in the Registration dropdown, but existing patient records that
         used them are unaffected — consultant text is saved on the record at registration time, not linked live to
         this list.
       </p>
+
+      {exportNotice && <p className="succ-note">{exportNotice}</p>}
+      {exportError && <p className="err">{exportError}</p>}
 
       <form className="master-add-form" onSubmit={submitAdd}>
         <input

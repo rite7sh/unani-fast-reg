@@ -1,5 +1,5 @@
 // Minimal, dependency-free horizontal bar chart (plain SVG + CSS width),
-// used for consultant-wise and diagnosis-wise distribution — label
+// used for consultant-wise and department-wise distribution — label
 // legibility matters more than a fixed grid here, so this renders as
 // simple proportional-width bars rather than an SVG plot.
 export default function HorizontalBarChart({

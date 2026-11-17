@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import AppHeader from "./AppHeader";
+import SyncStatusWidget, { notifySyncStatusChanged } from "./SyncStatusWidget";
 import PrintSlip from "./PrintSlip";
 import { printSlip } from "../lib/printSlip";
-
-type SyncState = "Offline" | "Ready to sync" | "Syncing..." | "Synced" | "Sync failed";
 
 function pad(n: number) {
   return String(n).padStart(2, "0");
@@ -68,9 +68,6 @@ export default function RegistrationScreen({
   const today = useMemo(() => new Date(), []);
   const dateStr = `${pad(today.getDate())}/${pad(today.getMonth() + 1)}/${today.getFullYear()}`;
 
-  const [sync, setSync] = useState<SyncState>("Offline");
-  const lastSynced = `${dateStr} 18:42`;
-
   const [name, setName] = useState("");
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("");
@@ -78,17 +75,10 @@ export default function RegistrationScreen({
   const [addrOpen, setAddrOpen] = useState(false);
   const [aadhaarNumber, setAadhaarNumber] = useState("");
   const [mobileNumber, setMobileNumber] = useState("");
-  const [diagnosis, setDiagnosis] = useState("");
-  const [otherDiagnosis, setOtherDiagnosis] = useState("");
   const [department, setDepartment] = useState("");
   const [consultant, setConsultant] = useState("");
   const addrRef = useRef<HTMLTextAreaElement>(null);
   const [isSaving, setIsSaving] = useState(false);
-
-  // Remembers the Diagnosis value at the moment the field is focused, so
-  // it can be restored on blur if the user opened the dropdown just to
-  // look (or backed out) without picking anything — see diagOnFocus below.
-  const diagnosisFocusValueRef = useRef("");
 
   type FieldKey =
     | "name"
@@ -97,55 +87,22 @@ export default function RegistrationScreen({
     | "address"
     | "aadhaarNumber"
     | "mobileNumber"
-    | "diagnosis"
-    | "otherDiagnosis"
     | "department"
     | "consultant";
   const [errors, setErrors] = useState<Partial<Record<FieldKey, string>>>({});
   const [saved, setSaved] = useState<PatientData | null>(null);
 
-  // "Other" is a UI-only sentinel for free-text diagnosis entry, not a
-  // manageable master-data row — appended client-side after the real,
-  // admin-managed list loads. Diagnoses/consultants used to be hardcoded
-  // here; they're now fetched so Admin's master-data changes take effect
-  // without a rebuild.
-  const [diagnosisOptions, setDiagnosisOptions] = useState<string[]>([]);
+  // Department -> Consultant is the only dependency now (Diagnosis was
+  // removed). Department is a flat, always-active list; Consultant is
+  // always filtered by whichever Department is currently selected — no
+  // ungated fallback list, unlike the old diagnosis-gated version.
+  const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
   const [consultantOptions, setConsultantOptions] = useState<string[]>([]);
 
   useEffect(() => {
     let cancelled = false;
     window.electron.db
-      .getDiagnoses()
-      .then((list) => {
-        if (!cancelled) setDiagnosisOptions([...list, "Other"]);
-      })
-      .catch((err) => console.error("[Registration] Failed to load diagnoses:", err));
-    window.electron.db
-      .getConsultants()
-      .then((list) => {
-        if (!cancelled) setConsultantOptions(list);
-      })
-      .catch((err) => console.error("[Registration] Failed to load consultants:", err));
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Departments mapped to the selected Diagnosis — empty until a diagnosis
-  // with at least one mapped department is chosen. Most real diagnoses
-  // currently have no department mapping (see Admin > Diagnoses), which is
-  // why the Consultant field below falls back to the full flat list
-  // whenever this is empty, rather than ever blocking registration.
-  const [departmentOptions, setDepartmentOptions] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (!diagnosis) {
-      setDepartmentOptions([]);
-      return;
-    }
-    let cancelled = false;
-    window.electron.db
-      .getDepartmentsForDiagnosis(diagnosis)
+      .getDepartments()
       .then((list) => {
         if (!cancelled) setDepartmentOptions(list);
       })
@@ -153,33 +110,24 @@ export default function RegistrationScreen({
     return () => {
       cancelled = true;
     };
-  }, [diagnosis]);
-
-  // Consultants mapped to the selected Department — only consulted when
-  // the current diagnosis actually has departments (departmentOptions.length
-  // > 0); otherwise the Consultant field uses the flat consultantOptions
-  // list exactly as before this feature existed.
-  const [departmentConsultantOptions, setDepartmentConsultantOptions] = useState<string[]>([]);
-  const hasDepartmentChain = departmentOptions.length > 0;
+  }, []);
 
   useEffect(() => {
-    if (!hasDepartmentChain || !department) {
-      setDepartmentConsultantOptions([]);
+    if (!department) {
+      setConsultantOptions([]);
       return;
     }
     let cancelled = false;
     window.electron.db
       .getConsultantsForDepartment(department)
       .then((list) => {
-        if (!cancelled) setDepartmentConsultantOptions(list);
+        if (!cancelled) setConsultantOptions(list);
       })
-      .catch((err) => console.error("[Registration] Failed to load department consultants:", err));
+      .catch((err) => console.error("[Registration] Failed to load consultants:", err));
     return () => {
       cancelled = true;
     };
-  }, [hasDepartmentChain, department]);
-
-  const effectiveConsultantOptions = hasDepartmentChain ? departmentConsultantOptions : consultantOptions;
+  }, [department]);
 
   // Kick off loading the bundled Urdu header font as early as possible —
   // .print-slip is display:none on screen, so nothing visible ever needs
@@ -274,12 +222,6 @@ export default function RegistrationScreen({
     return () => clearTimeout(timer);
   }, [name, age]);
 
-  useEffect(() => {
-    if (sync !== "Syncing...") return;
-    const t = setTimeout(() => setSync("Synced"), 900);
-    return () => clearTimeout(t);
-  }, [sync]);
-
   function reset() {
     setName("");
     setAge("");
@@ -287,8 +229,6 @@ export default function RegistrationScreen({
     setAddress("");
     setAadhaarNumber("");
     setMobileNumber("");
-    setDiagnosis("");
-    setOtherDiagnosis("");
     setDepartment("");
     setConsultant("");
     setErrors({});
@@ -320,13 +260,7 @@ export default function RegistrationScreen({
     if (aadhaarErr) err.aadhaarNumber = aadhaarErr;
     const mobileErr = validateMobile(mobileNumber);
     if (mobileErr) err.mobileNumber = mobileErr;
-    if (!diagnosis.trim()) err.diagnosis = "Select a diagnosis.";
-    if (diagnosis === "Other" && !otherDiagnosis.trim())
-      err.otherDiagnosis = "Specify the diagnosis.";
-    // Department is only required when this diagnosis actually has
-    // departments mapped (hasDepartmentChain) — most diagnoses don't yet,
-    // and registration must keep working exactly as before for those.
-    if (hasDepartmentChain && !department) err.department = "Select a department.";
+    if (!department) err.department = "Select a department.";
     if (!consultant) err.consultant = "Select a consultant.";
 
     setErrors(err);
@@ -349,18 +283,16 @@ export default function RegistrationScreen({
         age_months: ageParsed.months,
         gender,
         address: address.trim(),
-        diagnosis,
+        department,
         consultant,
         employee_id: employee,
         ...(aadhaarNumber.trim() ? { aadhaar_number: aadhaarNumber.trim() } : {}),
         ...(mobileNumber.trim() ? { mobile_number: mobileNumber.trim() } : {}),
-        ...(diagnosis === "Other" ? { diagnosis_other: otherDiagnosis.trim() } : {}),
-        ...(hasDepartmentChain && department ? { department } : {}),
       });
 
       setSaved(patient);
-      setSync("Ready to sync");
       reset();
+      notifySyncStatusChanged();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error("[Registration] Save failed:", message);
@@ -375,42 +307,24 @@ export default function RegistrationScreen({
 
   return (
     <div className="app">
-      <header className="appbar">
-        <div className="appbar-left">
-          <strong className="appbar-title">Unani Hospital</strong>
-          <span className="appbar-pipe" aria-hidden="true">
-            |
-          </span>
-          <span className="appbar-sub">OPD Management System</span>
-        </div>
-        <div className="appbar-right">
-          <span className={`sync sync-${sync.replace(/[^a-z]/gi, "").toLowerCase()}`}>
-            <span className="sdot" aria-hidden="true" />
-            {sync}
-          </span>
-          <span className="meta small">Last synced: {lastSynced}</span>
-          <button
-            className="btn-ghost"
-            onClick={() => setSync("Syncing...")}
-            disabled={sync === "Syncing..."}
-          >
-            Sync to Server
-          </button>
-          <span className="dot" aria-hidden="true" />
-          <button className="btn-ghost" onClick={onNavigateHistory} title="Opens records search">
-            Search Records
-          </button>
-          <span className="dot" aria-hidden="true" />
-          <button className="btn-ghost" onClick={onBack}>
-            Back to Dashboard
-          </button>
-          <span className="dot" aria-hidden="true" />
-          <span className="meta">Employee {employee}</span>
-          <button className="btn-ghost" onClick={onLogout}>
-            Logout
-          </button>
-        </div>
-      </header>
+      <AppHeader
+        employee={employee}
+        onLogout={onLogout}
+        subtitle="Register New Patient"
+        right={
+          <>
+            <SyncStatusWidget />
+            <span className="dot" aria-hidden="true" />
+            <button className="btn-ghost" onClick={onNavigateHistory} title="Opens records search">
+              Search Records
+            </button>
+            <span className="dot" aria-hidden="true" />
+            <button className="btn-ghost" onClick={onBack}>
+              Back to Dashboard
+            </button>
+          </>
+        }
+      />
 
       <main className="page">
         {saved ? (
@@ -573,82 +487,19 @@ export default function RegistrationScreen({
               </div>
 
               <div className="field">
-                <label className="lbl" htmlFor="diag">
-                  Diagnosis <span className="req">*</span>
-                </label>
-                <input
-                  id="diag"
-                  className="inp"
-                  list="diag-list"
-                  autoComplete="off"
-                  placeholder="Type to search (e.g. Nazla, Humma, Falij)"
-                  value={diagnosis}
-                  onFocus={() => {
-                    // A datalist popup filters its suggestions against the
-                    // input's CURRENT text — with the previous selection
-                    // still filled in, reopening the field shows only that
-                    // one exact match. Clearing on focus makes the full
-                    // list visible immediately; onBlur restores the prior
-                    // value if the user backs out without picking a new
-                    // one (diagnosis is still empty at that point since
-                    // nothing was typed/selected).
-                    diagnosisFocusValueRef.current = diagnosis;
-                    if (diagnosis) setDiagnosis("");
-                  }}
-                  onBlur={() => {
-                    if (!diagnosis && diagnosisFocusValueRef.current) {
-                      setDiagnosis(diagnosisFocusValueRef.current);
-                    }
-                  }}
-                  onChange={(e) => {
-                    setDiagnosis(e.target.value);
-                    setDepartment("");
-                    setConsultant("");
-                  }}
-                />
-                <datalist id="diag-list">
-                  {diagnosisOptions.map((d) => (
-                    <option key={d} value={d} />
-                  ))}
-                </datalist>
-                {errors.diagnosis && <p className="err">{errors.diagnosis}</p>}
-                {diagnosis === "Other" && (
-                  <div className="sub-field">
-                    <label className="lbl" htmlFor="odiag">
-                      Specify diagnosis <span className="req">*</span>
-                    </label>
-                    <input
-                      id="odiag"
-                      className="inp"
-                      value={otherDiagnosis}
-                      onChange={(e) => setOtherDiagnosis(e.target.value)}
-                    />
-                    {errors.otherDiagnosis && <p className="err">{errors.otherDiagnosis}</p>}
-                  </div>
-                )}
-              </div>
-
-              <div className="field">
                 <label className="lbl" htmlFor="dept">
-                  Department {hasDepartmentChain && <span className="req">*</span>}
+                  Department <span className="req">*</span>
                 </label>
                 <select
                   id="dept"
                   className="inp"
                   value={department}
-                  disabled={!hasDepartmentChain}
                   onChange={(e) => {
                     setDepartment(e.target.value);
                     setConsultant("");
                   }}
                 >
-                  <option value="">
-                    {!diagnosis
-                      ? "Select diagnosis first"
-                      : hasDepartmentChain
-                        ? "Select department"
-                        : "No departments configured for this diagnosis"}
-                  </option>
+                  <option value="">Select department</option>
                   {departmentOptions.map((d) => (
                     <option key={d} value={d}>
                       {d}
@@ -666,13 +517,11 @@ export default function RegistrationScreen({
                   id="cons"
                   className="inp"
                   value={consultant}
-                  disabled={hasDepartmentChain && !department}
+                  disabled={!department}
                   onChange={(e) => setConsultant(e.target.value)}
                 >
-                  <option value="">
-                    {hasDepartmentChain && !department ? "Select department first" : "Select consultant"}
-                  </option>
-                  {effectiveConsultantOptions.map((c) => (
+                  <option value="">{!department ? "Select department first" : "Select consultant"}</option>
+                  {consultantOptions.map((c) => (
                     <option key={c} value={c}>
                       {c}
                     </option>

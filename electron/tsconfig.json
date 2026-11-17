@@ -12,6 +12,6 @@
     "declaration": true,
     "outDir": "../dist-electron"
   },
-  "include": ["main.ts", "database.cjs.d.ts"],
+  "include": ["main.ts", "cloudBackup.ts", "sync.ts", "productionConfig.ts", "lanServer.ts", "database.cjs.d.ts"],
   "exclude": ["node_modules"]
 }

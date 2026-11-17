@@ -1,6 +1,5 @@
 import { useState } from "react";
 import AdminDashboardScreen from "./AdminDashboardScreen";
-import AdminDiagnosesScreen from "./AdminDiagnosesScreen";
 import AdminDepartmentsScreen from "./AdminDepartmentsScreen";
 import AdminConsultantsScreen from "./AdminConsultantsScreen";
 import AdminPatientsScreen from "./AdminPatientsScreen";
@@ -11,7 +10,6 @@ import PrintSlip from "./PrintSlip";
 
 export type AdminScreen =
   | "dashboard"
-  | "diagnoses"
   | "departments"
   | "consultants"
   | "patients"
@@ -21,7 +19,6 @@ export type AdminScreen =
 
 const NAV_ITEMS: { key: AdminScreen; label: string }[] = [
   { key: "dashboard", label: "Dashboard" },
-  { key: "diagnoses", label: "Diagnoses" },
   { key: "departments", label: "Departments" },
   { key: "consultants", label: "Consultants" },
   { key: "patients", label: "Patients" },
@@ -49,6 +46,7 @@ export default function AdminApp({ onLogout }: { onLogout: () => void }) {
     <div className="app">
       <header className="appbar">
         <div className="appbar-left">
+          <img src="./unani-logo.png" alt="" className="appbar-logo" />
           <strong className="appbar-title">Unani Hospital</strong>
           <span className="appbar-pipe" aria-hidden="true">
             |
@@ -75,7 +73,6 @@ export default function AdminApp({ onLogout }: { onLogout: () => void }) {
 
       <main className="page">
         {screen === "dashboard" && <AdminDashboardScreen onNavigate={setScreen} />}
-        {screen === "diagnoses" && <AdminDiagnosesScreen />}
         {screen === "departments" && <AdminDepartmentsScreen />}
         {screen === "consultants" && <AdminConsultantsScreen />}
         {screen === "patients" && <AdminPatientsScreen onPatientChange={setPrintPatient} />}

@@ -5,6 +5,7 @@ export interface PatientData {
   id?: number;
   opd_no: string;
   registration_date: string;
+  registration_time?: string | null;
   patient_name: string;
   age_years: number;
   age_months: number;
@@ -12,7 +13,8 @@ export interface PatientData {
   address: string;
   aadhaar_number?: string;
   mobile_number?: string;
-  diagnosis: string;
+  // Legacy — Diagnosis was removed as a concept; see electron/database.ts.
+  diagnosis?: string;
   diagnosis_other?: string;
   department?: string;
   consultant: string;
@@ -43,8 +45,9 @@ export interface SearchResult {
   age_months: number;
   gender: string;
   address: string;
-  diagnosis: string;
   registration_date: string;
+  registration_time: string | null;
+  department: string | null;
   consultant: string;
   is_deleted: number;
 }
@@ -60,6 +63,9 @@ export interface BackupStatus {
   lastBackupVerified: boolean;
   retainedCount: number;
   lastError: string | null;
+  customLocation: string | null;
+  customLocationLastError: string | null;
+  customLocationLastSuccessAt: string | null;
 }
 
 export interface MasterDataItem {
@@ -71,11 +77,11 @@ export interface MasterDataItem {
 
 export interface AdminAnalytics {
   totalRegistrations: number;
-  totalDiagnosesActive: number;
+  totalDepartmentsActive: number;
   totalConsultantsActive: number;
   genderCounts: { label: string; count: number }[];
   consultantCounts: { label: string; count: number }[];
-  diagnosisCounts: { label: string; count: number }[];
+  departmentCounts: { label: string; count: number }[];
   dailyCounts: { date: string; count: number }[];
 }
 
@@ -83,8 +89,27 @@ export interface CsvExportFilters {
   fromDate?: string;
   toDate?: string;
   gender?: string;
+  department?: string;
   consultant?: string;
-  diagnosis?: string;
+  fromTime?: string;
+  toTime?: string;
+}
+
+export interface PatientExportRow {
+  opd_no: string;
+  registration_date: string;
+  registration_time: string | null;
+  patient_name: string;
+  age_years: number;
+  age_months: number;
+  gender: string;
+  address: string;
+  aadhaar_number: string | null;
+  mobile_number: string | null;
+  department: string | null;
+  consultant: string;
+  employee_id: string;
+  created_at: string;
 }
 
 export interface BackupFileInfo {
@@ -92,6 +117,76 @@ export interface BackupFileInfo {
   createdAt: string;
   sizeBytes: number;
   verified: boolean;
+}
+
+export interface BackupLocationInfo {
+  location: string | null;
+  defaultLocation: string;
+}
+
+export interface CloudBackupStatus {
+  configured: boolean;
+  lastUploadAt: string | null;
+  lastUploadFile: string | null;
+  lastError: string | null;
+}
+
+export interface CloudBackupInfo {
+  filename: string;
+  sizeBytes: number;
+  sha256: string;
+  uploadedAt: string;
+}
+
+export interface RestoreSource {
+  type: "local" | "cloud";
+  filename: string;
+}
+
+export interface SyncStatus {
+  lastPushAt: string | null;
+  lastPushError: string | null;
+  pendingPushCount: number;
+  lastPullAt: string | null;
+  lastPullError: string | null;
+  lastPullCount: number | null;
+}
+
+export interface SyncPushResult {
+  success: boolean;
+  pushed: number;
+  failed: number;
+  error?: string;
+}
+
+export interface SyncPullResult {
+  success: boolean;
+  pulled: number;
+  error?: string;
+}
+
+export interface SyncCycleResult {
+  success: boolean;
+  push: SyncPushResult;
+  pull: SyncPullResult;
+}
+
+export interface LanServerStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number | null;
+  addresses: string[];
+  lastError: string | null;
+}
+
+export interface LanAddresses {
+  recommended: string | null;
+  all: string[];
+}
+
+export interface LanPairingCode {
+  code: string;
+  expiresAt: string;
 }
 
 // Secure context bridge - only expose what's necessary
@@ -110,7 +205,9 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Database API
   db: {
-    registerPatient: async (patient: Omit<PatientData, 'id' | 'opd_no' | 'created_at' | 'updated_at'>) => {
+    registerPatient: async (
+      patient: Omit<PatientData, 'id' | 'opd_no' | 'registration_time' | 'created_at' | 'updated_at'>
+    ) => {
       return ipcRenderer.invoke('db:registerPatient', patient);
     },
     checkDuplicate: async (patientName: string, ageYears: number) => {
@@ -125,17 +222,13 @@ contextBridge.exposeInMainWorld('electron', {
     updatePatient: async (id: number, updates: Partial<PatientData>) => {
       return ipcRenderer.invoke('db:updatePatient', id, updates);
     },
-    softDeletePatient: async (id: number) => {
-      return ipcRenderer.invoke('db:softDeletePatient', id);
-    },
-    getDiagnoses: async () => {
-      return ipcRenderer.invoke('db:getDiagnoses');
-    },
+    // No softDeletePatient here — deliberate; see main.ts's comment above
+    // the (removed) db:softDeletePatient handler for why.
     getConsultants: async () => {
       return ipcRenderer.invoke('db:getConsultants');
     },
-    getDepartmentsForDiagnosis: async (diagnosisName: string) => {
-      return ipcRenderer.invoke('db:getDepartmentsForDiagnosis', diagnosisName);
+    getDepartments: async () => {
+      return ipcRenderer.invoke('db:getDepartments');
     },
     getConsultantsForDepartment: async (departmentName: string) => {
       return ipcRenderer.invoke('db:getConsultantsForDepartment', departmentName);
@@ -143,8 +236,8 @@ contextBridge.exposeInMainWorld('electron', {
     getReturningPatientAddress: async (patientName: string) => {
       return ipcRenderer.invoke('db:getReturningPatientAddress', patientName);
     },
-    getDashboardStats: async (): Promise<DashboardStats> => {
-      return ipcRenderer.invoke('db:getDashboardStats');
+    getDashboardStats: async (filters?: CsvExportFilters): Promise<DashboardStats> => {
+      return ipcRenderer.invoke('db:getDashboardStats', filters);
     },
     previewNextOpdNumber: async (): Promise<string> => {
       return ipcRenderer.invoke('db:previewNextOpdNumber');
@@ -173,17 +266,11 @@ contextBridge.exposeInMainWorld('electron', {
     changePassword: async (currentPassword: string, newPassword: string): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('admin:changePassword', currentPassword, newPassword);
     },
-    listDiagnoses: async (): Promise<MasterDataItem[]> => {
-      return ipcRenderer.invoke('admin:listDiagnoses');
-    },
-    addDiagnosis: async (name: string): Promise<MasterDataItem> => {
-      return ipcRenderer.invoke('admin:addDiagnosis', name);
-    },
-    updateDiagnosis: async (id: number, name: string): Promise<{ success: boolean }> => {
-      return ipcRenderer.invoke('admin:updateDiagnosis', id, name);
-    },
-    setDiagnosisActive: async (id: number, active: boolean): Promise<{ success: boolean }> => {
-      return ipcRenderer.invoke('admin:setDiagnosisActive', id, active);
+    recoverPassword: async (
+      recoveryCode: string,
+      newPassword: string
+    ): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('admin:recoverPassword', recoveryCode, newPassword);
     },
     listConsultants: async (): Promise<MasterDataItem[]> => {
       return ipcRenderer.invoke('admin:listConsultants');
@@ -209,20 +296,14 @@ contextBridge.exposeInMainWorld('electron', {
     setDepartmentActive: async (id: number, active: boolean): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('admin:setDepartmentActive', id, active);
     },
-    getDiagnosisDepartments: async (diagnosisId: number): Promise<number[]> => {
-      return ipcRenderer.invoke('admin:getDiagnosisDepartments', diagnosisId);
-    },
-    setDiagnosisDepartments: async (diagnosisId: number, departmentIds: number[]): Promise<{ success: boolean }> => {
-      return ipcRenderer.invoke('admin:setDiagnosisDepartments', diagnosisId, departmentIds);
-    },
     getDepartmentConsultants: async (departmentId: number): Promise<number[]> => {
       return ipcRenderer.invoke('admin:getDepartmentConsultants', departmentId);
     },
     setDepartmentConsultants: async (departmentId: number, consultantIds: number[]): Promise<{ success: boolean }> => {
       return ipcRenderer.invoke('admin:setDepartmentConsultants', departmentId, consultantIds);
     },
-    getAnalytics: async (): Promise<AdminAnalytics> => {
-      return ipcRenderer.invoke('admin:getAnalytics');
+    getAnalytics: async (filters?: CsvExportFilters): Promise<AdminAnalytics> => {
+      return ipcRenderer.invoke('admin:getAnalytics', filters);
     },
     getPatient: async (id: number): Promise<PatientData | null> => {
       return ipcRenderer.invoke('admin:getPatient', id);
@@ -235,11 +316,94 @@ contextBridge.exposeInMainWorld('electron', {
     ): Promise<{ success: boolean; canceled?: boolean; filePath?: string }> => {
       return ipcRenderer.invoke('admin:exportCsv', filters);
     },
-    createBackupNow: async (): Promise<{ success: boolean; file?: string; error?: string }> => {
+    getReportPreview: async (filters: CsvExportFilters): Promise<PatientExportRow[]> => {
+      return ipcRenderer.invoke('admin:getReportPreview', filters);
+    },
+    exportConsultantsCsv: async (): Promise<{ success: boolean; canceled?: boolean; filePath?: string }> => {
+      return ipcRenderer.invoke('admin:exportConsultantsCsv');
+    },
+    exportPatientsListCsv: async (
+      query: string,
+      registrationDate?: string,
+      includeDeleted?: boolean
+    ): Promise<{ success: boolean; canceled?: boolean; filePath?: string }> => {
+      return ipcRenderer.invoke('admin:exportPatientsListCsv', query, registrationDate, includeDeleted);
+    },
+    createBackupNow: async (): Promise<{ success: boolean; file?: string; error?: string; created?: boolean }> => {
       return ipcRenderer.invoke('admin:createBackupNow');
     },
     listBackups: async (): Promise<BackupFileInfo[]> => {
       return ipcRenderer.invoke('admin:listBackups');
+    },
+    getBackupLocation: async (): Promise<BackupLocationInfo> => {
+      return ipcRenderer.invoke('admin:getBackupLocation');
+    },
+    chooseBackupLocation: async (): Promise<{
+      success: boolean;
+      canceled?: boolean;
+      error?: string;
+      location: string | null;
+    }> => {
+      return ipcRenderer.invoke('admin:chooseBackupLocation');
+    },
+    clearBackupLocation: async (): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:clearBackupLocation');
+    },
+    openBackupFolder: async (): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('admin:openBackupFolder');
+    },
+    getCloudBackupStatus: async (): Promise<CloudBackupStatus> => {
+      return ipcRenderer.invoke('admin:getCloudBackupStatus');
+    },
+    listCloudBackups: async (): Promise<CloudBackupInfo[]> => {
+      return ipcRenderer.invoke('admin:listCloudBackups');
+    },
+    uploadBackupNow: async (): Promise<{ success: boolean; error?: string; status?: string }> => {
+      return ipcRenderer.invoke('admin:uploadBackupNow');
+    },
+    restoreBackup: async (source: RestoreSource): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('admin:restoreBackup', source);
+    },
+    getLanServerStatus: async (): Promise<LanServerStatus> => {
+      return ipcRenderer.invoke('admin:getLanServerStatus');
+    },
+    startLanServer: async (): Promise<LanServerStatus> => {
+      return ipcRenderer.invoke('admin:startLanServer');
+    },
+    stopLanServer: async (): Promise<LanServerStatus> => {
+      return ipcRenderer.invoke('admin:stopLanServer');
+    },
+    restartLanServer: async (): Promise<LanServerStatus> => {
+      return ipcRenderer.invoke('admin:restartLanServer');
+    },
+    getLanAddresses: async (): Promise<LanAddresses> => {
+      return ipcRenderer.invoke('admin:getLanAddresses');
+    },
+    generateLanPairingCode: async (): Promise<LanPairingCode> => {
+      return ipcRenderer.invoke('admin:generateLanPairingCode');
+    },
+    setLanServerPort: async (port: number): Promise<{ success: boolean }> => {
+      return ipcRenderer.invoke('admin:setLanServerPort', port);
+    },
+  },
+
+  // Data Sync API — deliberately separate from `admin` above: Reception's
+  // own "Sync Now" action uses this too, not just Admin's. Sends/receives
+  // structured patient records to/from the central server; never touches a
+  // backup file (see the `admin.createBackupNow`/`admin.uploadBackupNow`
+  // pair above for that, entirely separate functionality).
+  sync: {
+    syncNow: async (): Promise<SyncCycleResult> => {
+      return ipcRenderer.invoke('sync:syncNow');
+    },
+    getStatus: async (): Promise<SyncStatus> => {
+      return ipcRenderer.invoke('sync:getStatus');
+    },
+    connectToHospitalServer: async (
+      address: string,
+      pairingCode: string
+    ): Promise<{ success: boolean; error?: string }> => {
+      return ipcRenderer.invoke('sync:connectToHospitalServer', address, pairingCode);
     },
   },
 

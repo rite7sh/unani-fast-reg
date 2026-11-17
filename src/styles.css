@@ -12,7 +12,7 @@
 }
 
 html, body { font-family: "Segoe UI", Roboto, Arial, sans-serif; color: var(--text); }
-body { background: #f6f8f7; }
+body { margin: 0; background: #f6f8f7; }
 
 .lbl { display: block; font-size: 12.5px; font-weight: 600; color: var(--muted); margin: 0 0 4px; }
 .req { color: var(--danger); }
@@ -73,12 +73,17 @@ select.inp { padding-left: 6px; }
 }
 .admin-login-link:hover { color: var(--hg-600); }
 
-/* App shell */
+/* App shell — bounds the app to the viewport so the appbar stays put and
+   each panel below scrolls its own overflow, instead of the whole document
+   growing and dragging every panel (including a shorter sibling panel that
+   Flexbox's default stretch would otherwise inflate to match) along with it. */
+.app { height: 100vh; display: flex; flex-direction: column; }
 .appbar {
   display: flex; align-items: center; justify-content: space-between;
   background: var(--hg-900); color: #fff; padding: 0 16px; height: 48px;
 }
 .appbar-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.appbar-logo { height: 30px; width: 30px; object-fit: contain; align-self: center; border-radius: 50%; background: #fff; }
 .appbar-title { font-size: 15px; }
 .appbar-sub { font-size: 12.5px; color: #b9d3c8; }
 .appbar-right { display: flex; align-items: center; gap: 10px; font-size: 13px; }
@@ -87,10 +92,95 @@ select.inp { padding-left: 6px; }
 .meta { color: #d7e7e0; }
 .dot { width: 4px; height: 4px; border-radius: 50%; background: #6f9587; }
 
-.page { padding: 18px; display: flex; justify-content: center; }
+.page {
+  padding: 18px; display: flex; justify-content: center; align-items: flex-start;
+  flex: 1; min-height: 0; box-sizing: border-box;
+}
 .panel {
   width: 100%; max-width: 900px; background: #fff; border: 1px solid var(--line);
   border-radius: 6px; padding: 18px 20px 16px; box-shadow: 0 1px 2px rgba(16,24,40,0.05);
+  box-sizing: border-box;
+}
+/* Each top-level panel (list panel and, where present, its sibling
+   detail-panel) caps to the page's available height and scrolls its own
+   content, so a long list/table never drags a shorter sibling panel away
+   with it — the sibling stays visible instead of scrolling off-screen.
+   Extended to .split-panels > .panel below — same rule, one level deeper,
+   for the two resizable split-panel screens. */
+.page > .panel, .split-panels > .panel { max-height: 100%; overflow-y: auto; }
+
+/* Resizable split-panel layout (Patient History, Admin Patients — see
+   useResizableSplit) — only rendered once a detail panel is open; a lone
+   list panel still uses the plain .panel path above, untouched. The list
+   panel's width is drag-controlled via inline style; the detail panel is
+   flex:1 and always fills whatever remains, so no drag position or window
+   size can leave blank space beside it. .split-panels stretches to fill
+   .page's bounded height (mirroring why .split-divider needs align-self:
+   stretch below) while keeping align-items:flex-start for its own two
+   children, for the same stretched-blank-panel reason .page does above. */
+.split-panels {
+  align-self: stretch; display: flex; align-items: flex-start;
+  min-height: 0; width: 100%;
+}
+/* .panel.split-… (two classes) — deliberately higher specificity than
+   .panel-wide's single class, since Admin Patients carries both and
+   .panel-wide is declared later in this file; without this, its
+   max-width:1200px would silently win back over on Admin Patients only,
+   contrary to the "no upper cap while resizable" reasoning above. */
+.panel.split-list-panel { flex: none; max-width: none; }
+.panel.split-detail-panel { flex: 1 1 0%; width: auto; min-width: 340px; max-width: none; }
+
+/* A hairline, not a heavy border — matches the app's light visual touch.
+   align-self:stretch spans the full row height regardless of which panel
+   is currently taller, giving a consistent full-height grab target. */
+.split-divider {
+  flex: none; align-self: stretch; width: 9px; margin: 0 -1px;
+  cursor: col-resize; background: transparent; padding: 0; border: 0;
+  display: flex; align-items: center; justify-content: center; touch-action: none;
+}
+.split-divider::before {
+  content: ""; width: 1px; height: 100%; background: var(--line);
+  transition: background-color .12s ease, width .12s ease;
+}
+.split-divider:hover::before, .split-divider:focus-visible::before {
+  background: var(--hg-600); width: 2px;
+}
+/* A real outline, not outline:none — matches the same focus treatment
+   already used on .btn-primary/.btn-secondary/.btn-ghost/.stat-tile-link
+   elsewhere in this file. Kept in addition to (not instead of) the shared
+   hover/focus ::before line-highlight above, so keyboard focus reads as
+   strictly more visible than a mouse hover, not identical to it. */
+.split-divider:focus-visible {
+  outline: 2px solid var(--hg-600); outline-offset: 2px;
+}
+
+/* A dedicated breakpoint, NOT the app's existing 820px one (.grid/
+   .detail-grid above) — that value has nothing to do with this feature's
+   actual minimums and is too narrow for it: Admin Patients alone needs
+   minLeft(560) + divider(9) + minRight(340) + .page's 36px padding =
+   945px before dragging has any room to work with, comfortably more than
+   820. Below 960px the two panels' combined minimum can exceed the
+   available window width — dragging can't fix that, so this falls back
+   to a single stacked column instead of forcing overflow. Shared by both
+   screens (rather than one threshold per screen) so the two switch to
+   the stacked layout at the same, predictable window width. .split-panels
+   itself becomes the scroll container so the two stacked panels don't
+   each also scroll internally (no nested scrollbars); the !important
+   overrides the resize feature's inline width style, which otherwise
+   beats any non-important stylesheet rule. */
+@media (max-width: 960px) {
+  .split-panels { flex-direction: column; overflow-y: auto; }
+  /* min-width, not just width, needs !important here — both screens set
+     an inline minWidth (420/560px) alongside the inline width whenever a
+     detail panel is open, and that inline min-width isn't gated on
+     viewport width, so it would otherwise keep applying in stacked mode
+     too (harmless today only because Electron's own window minWidth
+     happens to leave enough room — not a guarantee this stylesheet
+     should depend on). */
+  .split-list-panel, .split-detail-panel {
+    width: 100% !important; min-width: 0 !important; max-width: none; max-height: none; overflow-y: visible; flex: none;
+  }
+  .split-divider { display: none; }
 }
 .panel-title {
   margin: 0 0 14px; font-size: 16px; font-weight: 700; color: var(--hg-900);
@@ -123,6 +213,7 @@ select.inp { padding-left: 6px; }
 .sync-syncing .sdot { background: #6fb1e0; }
 .sync-synced .sdot { background: #4cba8a; }
 .sync-syncfailed .sdot { background: #e07a6f; }
+.meta.small.sync-error { color: #e07a6f; }
 
 /* Field hints */
 .hint { margin: 4px 0 0; font-size: 11.5px; color: var(--muted); }
@@ -188,6 +279,31 @@ select.inp { padding-left: 6px; }
 .opd-chip { display: inline-block; white-space: nowrap; font-weight: 700; color: var(--hg-700); font-variant-numeric: tabular-nums; }
 .opd-label { font-size: 12px; color: var(--muted); margin-right: 6px; }
 .empty-note { padding: 24px 0; text-align: center; color: var(--muted); font-size: 13.5px; }
+
+/* Wide tables (Reports preview) — scrolls within itself, page never does */
+.table-scroll { overflow-x: auto; }
+.hist-table.preview-table tbody tr { cursor: default; }
+.hist-table.preview-table tbody tr:hover { background: none; box-shadow: none; }
+/* Without a min-width, a browser's default (auto) table layout shrinks
+   every column to fit whatever space .table-scroll happens to have —
+   which, at 9 columns including two Hindi/English department+consultant
+   names, squeezes everything into an unreadable, cramped table instead of
+   actually scrolling. min-width forces the table to keep each column at a
+   sane natural width; .table-scroll then does its job and gives a real,
+   visible horizontal scrollbar for whatever doesn't fit. */
+.preview-table { min-width: 1100px; }
+/* Reports' preview query has no row cap (unlike Patients' search, which
+   caps at 50) — an unfiltered hospital's full history can run to hundreds
+   of rows. Without a bounded height, .table-scroll's own horizontal
+   scrollbar sits at the very bottom of that whole (possibly enormous)
+   table, reachable only by first scrolling the outer .panel down past
+   every row — in practice undiscoverable. Capping just this wrapper's
+   height and giving it its own overflow-y keeps its horizontal scrollbar
+   right below whichever rows are currently in view; .panel's own vertical
+   scroll (unchanged) still handles the page as a whole. A dedicated
+   modifier class, not a change to the shared .table-scroll rule above, so
+   Patients' (and any other) table-scroll usage is unaffected. */
+.table-scroll-bounded { max-height: 55vh; overflow-y: auto; }
 
 /* Prominent OPD result (registration success) */
 .opd-result {
@@ -270,10 +386,9 @@ select.inp { padding-left: 6px; }
 .master-add-form .inp { flex: 1; }
 .master-table td { vertical-align: middle; }
 
-/* Diagnosis→Department and Department→Consultant mapping UI (Admin
-   Diagnoses/Departments screens) — an inline panel inside an expanded
-   table row, not a modal, matching how detail panels elsewhere in Admin
-   sit inline rather than overlaying. */
+/* Department→Consultant mapping UI (Admin Departments screen) — an inline
+   panel inside an expanded table row, not a modal, matching how detail
+   panels elsewhere in Admin sit inline rather than overlaying. */
 .mapping-panel { padding: 10px 4px; }
 /* Reuses .radio's checkbox styling (same accent-color, same label layout)
    but wraps and has no fixed height, unlike .radios' fixed 34px single-row
@@ -282,7 +397,7 @@ select.inp { padding-left: 6px; }
 .checklist { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 10px 0; }
 
 /* Admin Patients' table is 9 columns wide, three of them free-text
-   (Name/Diagnosis/Consultant) that can legitimately run 100+ characters.
+   (Name/Department/Consultant) that can legitimately run 100+ characters.
    That combination doesn't fit the standard 900px .panel without either
    excessive wrapping on the free-text columns or starving C.R. No./
    Actions below a comfortable width — so this screen's panels (search +
@@ -291,30 +406,35 @@ select.inp { padding-left: 6px; }
 .panel-wide { max-width: 1200px; }
 
 /* table-layout:fixed (not auto) — auto let the browser's own content-fit
-   heuristics decide column widths, which produced two problems with data
-   this variable: badly uneven splits (Patient Name getting 3x Diagnosis'
-   width despite similar content length) and the table overflowing its
-   own panel outright, since auto-layout treats width:100% as a minimum,
-   not a cap. Fixed layout makes the percentages below authoritative and
-   guarantees the table (and every cell's content) stays within the
-   panel — the actual goal here — with long values wrapping inside their
-   column instead of forcing overflow or horizontal scroll. Percentages
-   sum to 100 and were sized against this panel's real ~1160px content
-   width: short/fixed-shape columns get just enough room to stay on one
-   line at realistic content lengths (verified below), and the rest goes
-   to Name/Diagnosis/Consultant in roughly equal shares. Scoped to
-   .patients-table only — PatientHistoryScreen's differently-shaped
-   7-column table (no Status/Actions) is untouched. */
-.patients-table { table-layout: fixed; }
+   heuristics decide column widths, which produced badly uneven splits
+   (Patient Name getting 3x Department's width despite similar content
+   length). Fixed layout makes the percentages below authoritative, so
+   short/fixed-shape columns get just enough room to stay on one line at
+   realistic content lengths, and the rest goes to Name/Department/
+   Consultant in roughly equal shares. Percentages were sized against this
+   panel's real ~1160px content width — comfortable there, but at a
+   genuinely narrow window (verified around ~750px) an unbreakable word
+   like "Registration" or "Consultant" no longer fits its column at all
+   and visibly overflows into the next one, which reads as a layout bug,
+   not wrapping. min-width + the same .table-scroll wrapper Reports uses
+   (see AdminPatientsScreen.tsx) is the fix — below that width the table
+   keeps its comfortable natural size and scrolls horizontally instead of
+   letting columns collide. Scoped to .patients-table only —
+   PatientHistoryScreen's differently-shaped 7-column table (no Status/
+   Actions, not table-layout:fixed) is untouched. */
+.patients-table { table-layout: fixed; min-width: 1200px; }
 .patients-table th.col-opd { width: 11%; }
 .patients-table th.col-xs { width: 5%; }
 .patients-table th.col-date { width: 8%; }
+/* HH:mm:ss — one character longer than col-date's DD/MM/YYYY at this font
+   size, so it gets its own (not reused col-xs) width rather than wrapping. */
+.patients-table th.col-time { width: 8%; }
 .patients-table th.col-status { width: 7%; }
 .patients-table th.actions-cell { width: 14%; }
 
 /* vertical-align:middle (only on the td, not the th) keeps the action
    buttons centered against sibling cells that wrap to multiple lines
-   (long names/diagnoses/consultants) — every other column in this table
+   (long names/departments/consultants) — every other column in this table
    stays top-aligned, unchanged. white-space:nowrap keeps Print/Edit on
    one line regardless of the fixed column width rounding. */
 .patients-table td.actions-cell { vertical-align: middle; white-space: nowrap; }
@@ -324,6 +444,37 @@ select.inp { padding-left: 6px; }
 }
 .status-badge.active { background: var(--hg-100); color: var(--hg-700); }
 .status-badge.inactive { background: #f1eeee; color: var(--muted); }
+/* Sync's own third state — visually distinct from Backup's plain
+   active/inactive so the two features never look like the same thing. */
+.status-badge.pending { background: #fdf3df; color: #8a5d12; }
+
+/* Admin Settings — each logically separate area (Password/Local Backup/
+   Cloud Backup/Data Sync) gets its own bordered card with an icon, a
+   title, and a one-line purpose description, instead of a bare heading
+   after a horizontal rule. Cloud Backup and Data Sync in particular get
+   distinct icon tones (blue vs violet) on top of already having separate
+   cards — two different, deliberate signals that they are not the same
+   feature, addressed directly at the "these look too similar" complaint
+   this was built to fix. */
+.settings-section {
+  border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  padding: 18px 20px 20px; margin-bottom: 20px;
+}
+.settings-section:last-child { margin-bottom: 0; }
+.settings-section-head {
+  display: flex; align-items: flex-start; gap: 12px;
+  margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line);
+}
+.settings-icon {
+  width: 34px; height: 34px; border-radius: 8px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.settings-icon.tone-neutral { background: #eef0ef; color: #5c6b65; }
+.settings-icon.tone-backup { background: var(--hg-100); color: var(--hg-700); }
+.settings-icon.tone-cloud { background: #e4eefb; color: #2f6fb0; }
+.settings-icon.tone-sync { background: #ede6f7; color: #6a3fa0; }
+.settings-section-title { margin: 0; font-size: 15px; font-weight: 700; color: var(--hg-900); }
+.settings-section-desc { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
 
 /* ---- OPD print slip (A4) — isolated from on-screen styles ---- */
 .print-slip { display: none; }
@@ -358,6 +509,11 @@ select.inp { padding-left: 6px; }
      collapsing them via display:none removes that height without touching
      .print-slip's own visibility/positioning rules below. */
   .appbar, .page { display: none; }
+  /* .app itself now carries a screen-only height:100vh (app shell fix,
+     above); neutralize it here so it can't reintroduce the same
+     blank-second-page pagination issue this block already exists to
+     prevent — .app should contribute no height at all during print. */
+  .app { height: auto; }
 
   /* height: 100vh, not a hardcoded mm value. In print, this resolves to
      the actual printable page height for whatever destination and settings
@@ -394,9 +550,15 @@ select.inp { padding-left: 6px; }
   }
   .print-slip-hindi {
     font-family: "Nirmala UI", "Mangal", sans-serif;
-    font-size: 13pt;
+    /* 13pt overflows the 180mm print-slip width (which already spans the
+       full printable area, leaving no page margin to spare) by ~13mm,
+       wrapping "भोपाल" onto its own line. 11.5pt is the smallest step
+       down that keeps the line on one row with a safe margin against
+       font-metric variance across print drivers. */
+    font-size: 11.5pt;
     font-weight: 700;
     margin-top: 2mm;
+    white-space: nowrap;
   }
 
   .print-slip-rule {
@@ -430,14 +592,20 @@ select.inp { padding-left: 6px; }
   .ps-opd-val { font-weight: 700; }
 
   .ps-opd { flex: 0 0 55mm; }
-  .ps-date { flex: 1; }
+  /* Date is a fixed-length value (DD/MM/YYYY, always 10 characters) so it
+     gets a fixed column rather than the flex:1 it used to have — that flex:1
+     was stretching a short date string across the entire rest of the row.
+     Time (added alongside it, HH:mm, always 5 characters) takes flex:1
+     instead, so the row's dotted underline still extends to the page edge
+     the way ps-date's did before. */
+  .ps-date { flex: 0 0 42mm; }
+  .ps-time { flex: 1; }
   /* Age/Sex gets a fixed, generously-sized column — enough for any
      realistic value without ever needing it — and Name gets everything
      else. A real width increase for Name, not a font shrink. */
   .ps-name { flex: 1; }
   .ps-agesex { flex: 0 0 40mm; }
   .ps-address { flex: 1; }
-  .ps-diagnosis { flex: 1; }
   .ps-consultant { flex: 1; }
 
   /* Reserved for the consultant's handwritten notes/findings/treatment —

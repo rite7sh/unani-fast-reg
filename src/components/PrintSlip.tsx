@@ -5,10 +5,16 @@ export default function PrintSlip({ patient }: { patient: PatientData | null }) 
   if (!patient) return null;
 
   const ageSex = `${patient.age_years}Y${patient.age_months ? ` ${patient.age_months}M` : ""} / ${patient.gender}`;
-  const diagnosisText =
-    patient.diagnosis === "Other" && patient.diagnosis_other
-      ? patient.diagnosis_other
-      : patient.diagnosis;
+  // HH:mm only on the slip — the stored value keeps seconds (registration_time
+  // is HH:mm:ss) for reports/CSV accuracy, but a printed slip has no use for
+  // them. "—" for old records that predate this column and had no created_at
+  // to safely backfill from — never a fabricated time.
+  const timeDisplay = patient.registration_time ? patient.registration_time.slice(0, 5) : "—";
+  // "Consultant (Department)" when both are on the record; department-less
+  // records (older data, or a consultant not tied to a department) just
+  // show the consultant, unchanged from before this was added.
+  const consultantDisplay =
+    patient.consultant && patient.department ? `${patient.consultant} (${patient.department})` : patient.consultant;
 
   return (
     <div className="print-slip">
@@ -32,6 +38,10 @@ export default function PrintSlip({ patient }: { patient: PatientData | null }) 
             <span className="print-slip-lbl">Date</span>
             <span className="print-slip-val">{patient.registration_date}</span>
           </span>
+          <span className="print-slip-field ps-time">
+            <span className="print-slip-lbl">Time</span>
+            <span className="print-slip-val">{timeDisplay}</span>
+          </span>
         </div>
 
         <div className="print-slip-row">
@@ -53,13 +63,9 @@ export default function PrintSlip({ patient }: { patient: PatientData | null }) 
         </div>
 
         <div className="print-slip-row">
-          <span className="print-slip-field ps-diagnosis">
-            <span className="print-slip-lbl">Diagnosis</span>
-            <span className="print-slip-val">{diagnosisText}</span>
-          </span>
           <span className="print-slip-field ps-consultant">
             <span className="print-slip-lbl">Consultant</span>
-            <span className="print-slip-val">{patient.consultant}</span>
+            <span className="print-slip-val">{consultantDisplay}</span>
           </span>
         </div>
       </div>

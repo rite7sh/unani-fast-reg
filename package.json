@@ -1,6 +1,7 @@
 {
   "name": "unani-opd",
   "version": "1.0.0",
+  "description": "Unani Hospital OPD Management System — desktop patient registration and reporting application",
   "private": true,
   "sideEffects": false,
   "type": "module",
@@ -15,10 +16,12 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "dist:win": "electron-builder --win"
+    "rebuild:server": "node scripts/rebuild-server-native.cjs",
+    "dist:win": "npm run rebuild:server && electron-builder --win"
   },
   "dependencies": {
-    "better-sqlite3": "12.11.1"
+    "better-sqlite3": "12.11.1",
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
@@ -64,9 +67,18 @@
     "asarUnpack": [
       "**/node_modules/better-sqlite3/**/*"
     ],
+    "extraResources": [
+      { "from": "server/dist", "to": "server/dist" },
+      { "from": "server/package.json", "to": "server/package.json" },
+      {
+        "from": "server/node_modules",
+        "to": "server/node_modules",
+        "filter": ["**/*", "!typescript/**", "!tsx/**", "!@types/**", "!.bin/**"]
+      }
+    ],
     "win": {
       "target": "nsis",
-      "icon": "public/favicon.ico"
+      "icon": "public/unani-logo.png"
     },
     "nsis": {
       "oneClick": false,

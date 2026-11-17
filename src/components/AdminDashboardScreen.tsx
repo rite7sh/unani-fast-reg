@@ -3,6 +3,7 @@ import BarChart from "./charts/BarChart";
 import HorizontalBarChart from "./charts/HorizontalBarChart";
 import DonutChart from "./charts/DonutChart";
 import type { AdminScreen } from "./AdminApp";
+import DashboardFilterBar, { EMPTY_DASHBOARD_FILTER, type DashboardFilterValue } from "./DashboardFilterBar";
 
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -21,11 +22,26 @@ export default function AdminDashboardScreen({ onNavigate }: { onNavigate: (scre
   const [analytics, setAnalytics] = useState<AdminAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [filters, setFilters] = useState<DashboardFilterValue>(EMPTY_DASHBOARD_FILTER);
+
+  // Pull the latest Reception data on landing here (Admin's first screen
+  // after login), once, regardless of filters — Sync failing (e.g. offline)
+  // never blocks analytics from loading, same as every other Admin screen.
+  // Kept separate from the filter-driven load below so changing a filter
+  // never re-triggers a network sync, only a local (instant) re-query.
+  useEffect(() => {
+    window.electron.sync.syncNow().catch((err) => console.error("[AdminDashboard] Startup sync failed:", err));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+
     window.electron.admin
-      .getAnalytics()
+      .getAnalytics({
+        ...(filters.gender ? { gender: filters.gender } : {}),
+        ...(filters.department ? { department: filters.department } : {}),
+        ...(filters.consultant ? { consultant: filters.consultant } : {}),
+      })
       .then((result) => {
         if (!cancelled) {
           setAnalytics(result);
@@ -36,10 +52,11 @@ export default function AdminDashboardScreen({ onNavigate }: { onNavigate: (scre
         console.error("[AdminDashboard] Failed to load analytics:", err);
         if (!cancelled) setError("Could not load analytics.");
       });
+
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [filters]);
 
   return (
     <section className="panel">
@@ -50,6 +67,8 @@ export default function AdminDashboardScreen({ onNavigate }: { onNavigate: (scre
 
       {error && <p className="err">{error}</p>}
 
+      <DashboardFilterBar value={filters} onChange={setFilters} />
+
       <div className="stats">
         <button className="stat-tile stat-tile-link" onClick={() => onNavigate("patients")}>
           <div className="stat-value">{analytics ? analytics.totalRegistrations : "—"}</div>
@@ -59,9 +78,9 @@ export default function AdminDashboardScreen({ onNavigate }: { onNavigate: (scre
           <div className="stat-value">{analytics ? analytics.totalConsultantsActive : "—"}</div>
           <div className="stat-label">Active Consultants</div>
         </button>
-        <button className="stat-tile stat-tile-link" onClick={() => onNavigate("diagnoses")}>
-          <div className="stat-value">{analytics ? analytics.totalDiagnosesActive : "—"}</div>
-          <div className="stat-label">Active Diagnoses</div>
+        <button className="stat-tile stat-tile-link" onClick={() => onNavigate("departments")}>
+          <div className="stat-value">{analytics ? analytics.totalDepartmentsActive : "—"}</div>
+          <div className="stat-label">Active Departments</div>
         </button>
       </div>
 
@@ -83,9 +102,9 @@ export default function AdminDashboardScreen({ onNavigate }: { onNavigate: (scre
           </div>
 
           <div className="chart-card">
-            <h3 className="chart-card-title">Diagnosis-wise Distribution (Top 10)</h3>
+            <h3 className="chart-card-title">Department-wise Distribution</h3>
             <HorizontalBarChart
-              data={analytics.diagnosisCounts.map((d) => ({ label: d.label, value: d.count }))}
+              data={analytics.departmentCounts.map((d) => ({ label: d.label, value: d.count }))}
               color="#2f6fb0"
             />
           </div>

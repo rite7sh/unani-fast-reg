@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import AppHeader from "./AppHeader";
+import SyncStatusWidget from "./SyncStatusWidget";
+import DashboardFilterBar, { EMPTY_DASHBOARD_FILTER, type DashboardFilterValue } from "./DashboardFilterBar";
 
 function formatDateTime(iso: string): string {
   const d = new Date(iso);
@@ -21,12 +23,17 @@ export default function DashboardScreen({
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [backupStatus, setBackupStatus] = useState<BackupStatus | null>(null);
+  const [filters, setFilters] = useState<DashboardFilterValue>(EMPTY_DASHBOARD_FILTER);
 
   useEffect(() => {
     let cancelled = false;
 
     window.electron.db
-      .getDashboardStats()
+      .getDashboardStats({
+        ...(filters.gender ? { gender: filters.gender } : {}),
+        ...(filters.department ? { department: filters.department } : {}),
+        ...(filters.consultant ? { consultant: filters.consultant } : {}),
+      })
       .then((result) => {
         if (!cancelled) setStats(result);
       })
@@ -34,6 +41,14 @@ export default function DashboardScreen({
         console.error("[Dashboard] Failed to load stats:", err);
         if (!cancelled) setError("Could not load registration counts.");
       });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filters]);
+
+  useEffect(() => {
+    let cancelled = false;
 
     window.electron.db
       .getBackupStatus()
@@ -51,13 +66,27 @@ export default function DashboardScreen({
 
   return (
     <div className="app">
-      <AppHeader employee={employee} onLogout={onLogout} />
+      <AppHeader
+        employee={employee}
+        onLogout={onLogout}
+        right={
+          <>
+            <SyncStatusWidget />
+            <span className="dot" aria-hidden="true" />
+            <button className="btn-ghost" onClick={onNavigateHistory} title="Opens records search">
+              Search Records
+            </button>
+          </>
+        }
+      />
 
       <main className="page">
         <section className="panel">
           <h2 className="panel-title">Employee Dashboard</h2>
 
           {error && <p className="err">{error}</p>}
+
+          <DashboardFilterBar value={filters} onChange={setFilters} />
 
           <div className="stats">
             <div className="stat-tile">
